@@ -6,6 +6,8 @@ import platform
 import tempfile
 import re
 
+import scripts.test_extended.info_io
+
 if sys.version_info >= (3,0):
     import urllib.parse
 
@@ -31,7 +33,7 @@ def test_info(lib, device_id):
 def test_status(lib, device_id):
     print("\nGet status")
     x_status = status_t()
-    result = lib.get_status(device_id, byref(x_status))
+    result = scripts.test_extended.info_io.get_status(device_id, byref(x_status))
     print("Result: " + repr(result))
     if result == Result.Ok:
         print("Status.Ipwr: " + repr(x_status.Ipwr))

@@ -1,6 +1,7 @@
 # Credit: https://github.com/github/gitignore/blob/master/Python.gitignore
 
 .idea/
+pyment.cfg
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
