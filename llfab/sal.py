@@ -52,3 +52,7 @@ class SixAxisLaserController:
 
     # TODO: Make the __del__ so that when the class is destroyed, it relases
     #  the motors.
+
+
+# The name's too long
+SALC = SixAxisLaserController
