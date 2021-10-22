@@ -144,7 +144,7 @@ class MotorController:
         """
         step, microstep = self.get_position_step()
         # TODO: Use the libximc for this, not my own math.
-        return (step + microstep / 256) * self.unit.A
+        return (step + microstep / 256) / self.unit.A
 
     def get_position_step(self):
         """

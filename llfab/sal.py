@@ -53,17 +53,18 @@ class SixAxisLaserController:
     X_UNIT = (100, 'mm')
     Y_UNIT = (100, 'mm')
     Z_UNIT = (403.4, 'mm')
-    N_UNIT = (0, 'deg')
-    P_UNIT = (-100, 'deg')
-    V_UNIT = (89, 'deg')
+    N_UNIT = (99.88, 'deg')
+    P_UNIT = (-100.4, 'deg')
+    V_UNIT = (-99.87, 'deg')
 
     P_POLE_HEIGHT_MM = 111  # mm
-    N_ARM_LENGTH_MM = 74  # mm
-    P_ARM_LENGTH_MM = 51  # mm
-    V_ARM_LENGTH_MM = 74  # mm (Should be equal to N_ARM_LENGTH_MM)
+    N_RADIUS_MM = 74  # mm
+    P_RADIUS_MM = 51  # mm
+    V_RADIUS_MM = 74  # mm (Should be equal to N_RADIUS_MM)
     Z_DEFAULT_MM = 120  # mm (Should be greater than P_POLE_HEIGHT_MM)
+    N_DEFAULT_DEG = -90  # deg
 
-    assert N_ARM_LENGTH_MM == V_ARM_LENGTH_MM, 'These have to be equal, it ' \
+    assert N_RADIUS_MM == V_RADIUS_MM, 'These have to be equal, it ' \
         'would matter if we were using the N-Axis, but right now we ' \
         'basically want to keep x=0.'
     assert Z_DEFAULT_MM > P_POLE_HEIGHT_MM, 'If the default z position for ' \
@@ -78,16 +79,28 @@ class SixAxisLaserController:
         self.n = motor.MotorController(serial=self.N_SERIAL, unit=self.N_UNIT)
         self.p = motor.MotorController(serial=self.P_SERIAL, unit=self.P_UNIT)
         self.v = motor.MotorController(serial=self.V_SERIAL, unit=self.V_UNIT)
+        self.motors = [self.x, self.y, self.z, self.n, self.p, self.v]
         # TODO: Set up bounds
+
+    def get_origin(self):
+        """Return the (expected) current location of the origin."""
+        raise NotImplementedError()  # TODO
 
     def get_position(self):
         """Return a tuple of all the motors' positions."""
-        return self.x.get_position(), self.y.get_position(), \
-            self.z.get_position(), self.n.get_position(), \
-            self.p.get_position(), self.v.get_position(),
+        return [m.get_position() for m in self.motors]
+
+    def get_position_step(self):
+        """Return a tuple of all the motors' positions in steps."""
+        return [m.get_position_step()[0] for m in self.motors]
+
+    def get_position_microstep(self):
+        """Return a tuple of all the motors' positions in steps."""
+        return [m.get_position_step()[1] for m in self.motors]
 
     def set_zero(self):
         """Set the current position as zero."""
+        _logger.info('Defining current 6-axis position as zero.')
         self.x.set_zero()
         self.y.set_zero()
         self.z.set_zero()
@@ -99,27 +112,42 @@ class SixAxisLaserController:
         """TODO
 
         """
-        x_mm = self.N_ARM_LENGTH_MM - self.V_ARM_LENGTH_MM
-        y_mm = -math.sin(incline) * self.P_ARM_LENGTH_MM
-        z_mm = height - self.P_POLE_HEIGHT_MM + math.cos(incline) * \
-            self.P_ARM_LENGTH_MM
-        n_deg = 0
+        # Get radians for math.sin & math.cos functions
+        n_rad = math.radians(self.N_DEFAULT_DEG)
+        p_rad = math.radians(incline)
+        v_rad = math.radians(azimuth)
+
+        # Calculate where each stepper should go to
+        x_mm = ((self.N_RADIUS_MM - self.V_RADIUS_MM) *
+                math.cos(n_rad) +
+                self.P_RADIUS_MM * math.sin(p_rad) *
+                math.sin(n_rad))
+        y_mm = ((self.N_RADIUS_MM - self.V_RADIUS_MM) *
+                math.sin(n_rad) -
+                self.P_RADIUS_MM * math.sin(p_rad) *
+                math.cos(n_rad))
+        z_mm = (self.Z_DEFAULT_MM - self.P_POLE_HEIGHT_MM +
+                self.P_RADIUS_MM * math.cos(p_rad))
+        n_deg = self.N_DEFAULT_DEG
         p_deg = incline
         v_deg = azimuth
 
-        n_hat = np.asarray([-math.cos(n_deg), math.sin(n_deg), 0])
-        p_hat = np.asarray([-math.sin(n_deg), math.cos(n_deg), 0])
-        z_hat = np.asarray([0, 0, -1])
+        # For debugging purposes, calculate where this configuration should,
+        #  in theory, put the origin.s
+        n_hat = np.asarray([-math.cos(n_rad), -math.sin(n_rad), 0])
+        p_hat = np.asarray([-math.sin(n_rad), math.cos(n_rad), 0])
+        z_hat = np.asarray([0, 0, 1])
 
         n_pos = np.asarray([x_mm, y_mm, 0])
-        p_pos = n_pos + self.N_ARM_LENGTH_MM * n_hat + \
+        p_pos = n_pos + self.N_RADIUS_MM * n_hat + \
             (z_mm + self.P_POLE_HEIGHT_MM) * z_hat
-        o_pos = (p_pos + self.P_ARM_LENGTH_MM * (-math.cos(p_deg) * z_hat +
-                                                 math.sin(p_deg) * p_hat) -
-                 self.V_ARM_LENGTH_MM * n_hat)
+        o_pos = (p_pos + self.P_RADIUS_MM * (-math.cos(p_rad) * z_hat +
+                                             math.sin(p_rad) * p_hat) -
+                 self.V_RADIUS_MM * n_hat)
         _logger.debug(f'Moving origin to ({int(o_pos[0])}mm, '
                       f'{int(o_pos[1])}mm, {int(o_pos[2])}mm)')
 
+        # Actually move it.
         self.x.move_to(x_mm)
         self.y.move_to(y_mm)
         self.z.move_to(z_mm)
