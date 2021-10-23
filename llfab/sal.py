@@ -52,24 +52,22 @@ class SixAxisLaserController:
 
     X_UNIT = (100, 'mm')
     Y_UNIT = (100, 'mm')
-    Z_UNIT = (403.4, 'mm')
+    Z_UNIT = (399.40625, 'mm')
     N_UNIT = (99.88, 'deg')
     P_UNIT = (-100.4, 'deg')
     V_UNIT = (-99.87, 'deg')
 
-    P_POLE_HEIGHT_MM = 111  # mm
-    N_RADIUS_MM = 74  # mm
-    P_RADIUS_MM = 51  # mm
-    V_RADIUS_MM = 74  # mm (Should be equal to N_RADIUS_MM)
-    Z_DEFAULT_MM = 120  # mm (Should be greater than P_POLE_HEIGHT_MM)
-    N_DEFAULT_DEG = -90  # deg
+    Z_BOUNDS = (0, 45)  # TODO
 
-    assert N_RADIUS_MM == V_RADIUS_MM, 'These have to be equal, it ' \
-        'would matter if we were using the N-Axis, but right now we ' \
-        'basically want to keep x=0.'
-    assert Z_DEFAULT_MM > P_POLE_HEIGHT_MM, 'If the default z position for ' \
-        'the lenslet is less than the height of the P_Axis\'s pole, then at ' \
-        'incline=90deg, the z-axis won\'t be able to go low enough'
+    P_RADIUS_MM = 56.5  # Compare the height of the origin at p=0 and 90 deg.
+    Z_ZERO_MM = 105  # Define z=0 when the v-bed is 105 mm off of the xy bed
+    Z_DEFAULT_MM = 150  # The height which it will try to keep the origin at.
+    N_DEFAULT_DEG = -45  # We don't need the n-axis to move, so fix it.
+
+    # assert Z_DEFAULT_MM > Z_ZERO_MM + P_RADIUS_MM, 'If the default z ' \
+    #     'position for the lenslet is less than the height of the P_Axis\'s ' \
+    #     'pole, then at incline=90deg, the z-axis won\'t be able to go low ' \
+    #     'enough'
 
     def __init__(self):
         # Capture all six motors
@@ -84,7 +82,19 @@ class SixAxisLaserController:
 
     def get_origin(self):
         """Return the (expected) current location of the origin."""
-        raise NotImplementedError()  # TODO
+        return self.calc_origin(*self.get_position())
+
+    def calc_origin(self, x_mm, y_mm, z_mm, n_deg, p_deg, v_deg):
+        """Calculates the expected location of the origin given positions."""
+        n_rad = math.radians(n_deg)
+        p_rad = math.radians(p_deg)
+        # v_rad = math.radians(v_deg)
+
+        return (
+            x_mm - self.P_RADIUS_MM * math.sin(p_rad) * math.sin(n_rad),
+            y_mm + self.P_RADIUS_MM * math.sin(p_rad) * math.cos(n_rad),
+            z_mm + self.Z_ZERO_MM + self.P_RADIUS_MM * (1 - math.cos(p_rad)),
+        )
 
     def get_position(self):
         """Return a tuple of all the motors' positions."""
@@ -112,38 +122,23 @@ class SixAxisLaserController:
         """TODO
 
         """
-        # Get radians for math.sin & math.cos functions
-        n_rad = math.radians(self.N_DEFAULT_DEG)
-        p_rad = math.radians(incline)
-        v_rad = math.radians(azimuth)
-
-        # Calculate where each stepper should go to
-        x_mm = ((self.N_RADIUS_MM - self.V_RADIUS_MM) *
-                math.cos(n_rad) +
-                self.P_RADIUS_MM * math.sin(p_rad) *
-                math.sin(n_rad))
-        y_mm = ((self.N_RADIUS_MM - self.V_RADIUS_MM) *
-                math.sin(n_rad) -
-                self.P_RADIUS_MM * math.sin(p_rad) *
-                math.cos(n_rad))
-        z_mm = (self.Z_DEFAULT_MM - self.P_POLE_HEIGHT_MM +
-                self.P_RADIUS_MM * math.cos(p_rad))
+        # The angles are independent, and we calculate the xyz.
         n_deg = self.N_DEFAULT_DEG
         p_deg = incline
         v_deg = azimuth
 
-        # For debugging purposes, calculate where this configuration should,
-        #  in theory, put the origin.s
-        n_hat = np.asarray([-math.cos(n_rad), -math.sin(n_rad), 0])
-        p_hat = np.asarray([-math.sin(n_rad), math.cos(n_rad), 0])
-        z_hat = np.asarray([0, 0, 1])
+        # Get radians for math.sin & math.cos functions
+        n_rad = math.radians(n_deg)
+        p_rad = math.radians(incline)
+        # v_rad = math.radians(azimuth)
 
-        n_pos = np.asarray([x_mm, y_mm, 0])
-        p_pos = n_pos + self.N_RADIUS_MM * n_hat + \
-            (z_mm + self.P_POLE_HEIGHT_MM) * z_hat
-        o_pos = (p_pos + self.P_RADIUS_MM * (-math.cos(p_rad) * z_hat +
-                                             math.sin(p_rad) * p_hat) -
-                 self.V_RADIUS_MM * n_hat)
+        # Calculate where each stepper should go to
+        x_mm = (self.P_RADIUS_MM * math.sin(p_rad) * math.sin(n_rad))
+        y_mm = (-self.P_RADIUS_MM * math.sin(p_rad) * math.cos(n_rad))
+        z_mm = (height - self.Z_ZERO_MM - self.P_RADIUS_MM *
+                (1 - math.cos(p_rad)))
+
+        o_pos = self.calc_origin(x_mm, y_mm, z_mm, n_deg, p_deg, v_deg)
         _logger.debug(f'Moving origin to ({int(o_pos[0])}mm, '
                       f'{int(o_pos[1])}mm, {int(o_pos[2])}mm)')
 
