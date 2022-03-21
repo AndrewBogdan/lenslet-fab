@@ -9,6 +9,7 @@ import logging
 import math
 
 from llfab import ezcad
+from llfab import gas
 from llfab import motor
 
 
@@ -294,10 +295,19 @@ class SixAxisLaserController:
         for mot in self.motors:
             mot.move_to(0)
 
+    # --- Static Controller Functions -----------------------------------------
+    # These functions forward to similar functions in other files, I have them
+    #  here for centralized control.
     @staticmethod
     def lase():
         """Run the laser. Currently just presses F2 on EZCAD."""
         ezcad.ezcad_lase()
+
+    @staticmethod
+    def gas():
+        """Return a context which guarantees that the gas will at least
+        attempt to shut off."""
+        return gas.gas()
 
     def __del__(self):
         self.free()
