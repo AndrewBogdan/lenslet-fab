@@ -2,16 +2,23 @@
 Module for controlling the motors through pyximc.
 """
 
-from typing import Optional, Tuple
+from typing import TypeAlias, Optional, Tuple
 import logging
 
 import pyximc
 from pyximc import lib as libximc
 
+# --- Module Definitions ------------------------------------------------------
+# TODO: Does this make the code more or less clear?
+UnitPosition: TypeAlias = float
+StepPosition: TypeAlias = Tuple[int, int]
+Position: TypeAlias = UnitPosition | StepPosition
+
 
 _logger = logging.getLogger(__name__)
 
 
+# --- Class: MotorController --------------------------------------------------
 class MotorController:
     """
     class MotorController()
@@ -21,7 +28,8 @@ class MotorController:
 
     def __init__(self,
                  serial: int,
-                 unit: Optional[Tuple[float, str]] = None):
+                 unit: Optional[Tuple[float, str]] = None,
+                 bounds: Optional[Tuple[Position, Position]] = None):
         # --- Instance Variables ---
         #  Device connection information
         self.port: str
@@ -30,12 +38,14 @@ class MotorController:
         self.serial: int
         #  Calibration information
         self.unit: Optional[pyximc.calibration_t] = None
-        # self.unit_bounds: Optional[Tuple[float, float]] = None
         self.unit_name: Optional[str] = None
+        self.bounds: (Optional[StepPosition, Optional[StepPosition]]) = \
+            (None, None)
 
         # --- Setup ---
         self._capture_device_by_serial(serial)
         if unit: self._set_user_unit(*unit)
+        if bounds: self._set_bounds(*bounds)
 
     # --- Initialization ------------------------------------------------------
     def _capture_device_by_serial(self, serial: int):
@@ -115,13 +125,8 @@ class MotorController:
         _logger.error(err_msg)
         raise DeviceNotFoundError(err_msg)
 
-    def _set_user_unit(self,
-                       steps_per_unit: float,
-                       # lower_bound: float,
-                       # upper_bound: float,
-                       unit_name: str = ''):
-        """
-        Set the motor's user unit to scale by steps_per_unit.
+    def _set_user_unit(self, steps_per_unit: float, unit_name: str = ''):
+        """Set the motor's user unit to scale by steps_per_unit.
 
         Args:
             steps_per_unit (float): The multiplier to convert units to steps
@@ -134,21 +139,153 @@ class MotorController:
         # self.unit_bounds = (lower_bound, upper_bound)
         self.unit_name = unit_name
 
-    # --- Information (Getters) -----------------------------------------------
-    def get_position(self):
+    def _set_bounds(self, lower: Position, upper: Position):
+        """Set the upper and lower bounds of the motor.
+
+        Args:
+            lower: The lower bound, in (step, microstep) or user units
+            upper: The upper bound, in (step, microstep) or user units
         """
-        Get the motor's current position in user units.
+        if lower is not None:
+            lower = self._parse_position(pos=lower)
+        if upper is not None:
+            upper = self._parse_position(pos=upper)
+        self.bounds = (lower, upper)
+
+    # --- Utility -------------------------------------------------------------
+    def _unit_to_step(self, amount: UnitPosition) -> StepPosition:
+        """Convert a position or offset from user units to steps.
+
+        Args:
+            amount: The position or offest in user units.
+
+        Returns:
+            An (int, int) tuple of (steps, microsteps) corresponding to the
+            position/offset specified.
+
+        Raises:
+            NoUserUnitError: If the user has not given user units.
+        """
+        if not self.unit:
+            raise NoUserUnitError()
+        return \
+            int((self.unit.A * amount) // 1), \
+            int((256 * (self.unit.A * amount)) % 1)
+
+    def _step_to_unit(self, step: StepPosition) -> UnitPosition:
+        """Convert a position or offset from steps to user units.
+
+        Args:
+            step: A tuple (int, int) of (steps, microsteps).
+
+        Returns:
+            An float of the user unit representation of that position.
+
+        Raises:
+            NoUserUnitError: If the user has not given user units.
+        """
+        if not self.unit:
+            raise NoUserUnitError()
+
+        # Allow the user to not give a tuple, but don't suggest this behavior.
+        if not isinstance(step, (tuple, list)): step = (step, 0)
+        # This will allow the user to supply floating point steps, but
+        #  again, I'm not going to suggest this behavior.
+        return round(step[0] * 256 + step[1]) / 256 / self.unit.A
+
+    def _parse_position(self, *,
+                        pos: Optional[Position] = None,
+                        unit: Optional[UnitPosition] = None,
+                        step: Optional[StepPosition] = None,) -> StepPosition:
+        """Converts user-supplied position intelligently into steps (int, int).
+
+        - It will throw warnings if the behavior might be unexpected.
+        - Exactly one of the parameters can be supplied.
+        - It will handle it steps is an int or a float, but this is not
+            recommended usage.
+
+        Args:
+            pos: The position, in either units or steps.
+            unit: The position in user units.
+            step: The position in steps.
+
+        Returns:
+            The position in (int, int) corresponding to (steps, microsteps).
+
+        Raises:
+            NoUserUnitError: If you supply unit but don't define user units.
+        """
+        if sum([pos is not None, unit is not None, step is not None]) != 1:
+            raise TypeError('Exactly one of (pos, unit, step) should be given.')
+
+        if pos:
+            if self.unit is None:
+                # If no user unit is defined, assume they're giving a step.
+                step = pos
+            elif isinstance(pos, (list, tuple)):
+                # If they give a tuple/list, it's definitely a step.
+                step = pos
+            else:
+                # If they defined a unit and didn't give tuple/list, then they
+                #  probably want to use user units.
+                unit = pos
+
+        if unit:
+            return self._unit_to_step(unit)
+        elif step:
+            if isinstance(step, (tuple, list)):
+                return tuple(step)
+            elif isinstance(step, int):
+                return step, 0
+            elif isinstance(step, float):
+                return int(step), int((step % 0) * 256)
+        assert False, 'Unreachable code'
+
+    def _bound_position(self, step: StepPosition, rail=False) -> StepPosition:
+        """Check the position against the bounds, if bounds are supplied.
+
+        Args:
+            step: The (int, int) step position to check bounds for.
+            rail: If the position is out of bounds, return the bound instead
+                of raising an error.
+
+        Returns:
+            The position to go to in (steps, microsteps). If rail=True, then
+            it might be the maximum/minimum possible. Otherwise, it will be
+            exactly what you put in.
+
+        Raises:
+            PositionOutOfBoundsError: If rail=False and you supply a position
+                that's out of bounds.
+        """
+        if self.bounds[0] is not None:
+            lower = self.bounds[0][0] + self.bounds[0][1] / 256
+            if step[0] + step[1] / 256 < lower:
+                if rail: return self.bounds[0]
+                raise PositionOutOfBoundsError(f'Position {step} below lower '
+                                               f'bound {self.bounds[0]}')
+        if self.bounds[1] is not None:
+            upper = self.bounds[1][0] + self.bounds[1][1] / 256
+            if step[0] + step[1] / 256 > upper:
+                if rail: return self.bounds[1]
+                raise PositionOutOfBoundsError(f'Position {step} above upper '
+                                               f'bound {self.bounds[1]}')
+        return step
+
+    # --- Information (Getters) -----------------------------------------------
+    def get_position(self) -> float:
+        """Get the motor's current position in user units.
 
         Returns:
             position (float): The position in user units.
         """
         step, microstep = self.get_position_step()
         # TODO: Use the libximc for this, not my own math.
+        # TODO: Raise an error if there's no user units
         return (step + microstep / 256) / self.unit.A
 
-    def get_position_step(self):
-        """
-        Get the motor's current position in steps.
+    def get_position_step(self) -> (int, int):
+        """Get the motor's current position in steps.
 
         Returns: a tuple of:
             step (int): the step number
@@ -180,38 +317,56 @@ class MotorController:
     # --- Movement Functions --------------------------------------------------
     # TODO: Should I have separate move functions for user units and steps,
     #  or should it be a flag?
-    def move_to(self, pos: float):
-        """
-        Move to the specified location, in user units (absolute positioning).
+    def move_to(self, pos: Optional[Position] = None, *,
+                unit: Optional[UnitPosition] = None,
+                step: Optional[StepPosition] = None,
+                rail: bool = False):
+        """Move to the specified location, in user units (absolute position).
+
+        Exactly one of pos, unit, and step should be supplied.
 
         Args:
-            pos (float): The position to move to, in user units.
+            pos: The position to move to, in user units or steps.
+            unit: The position to move to, in user units.
+            step: The position to move to, in (step, microstep) format.
+            rail: If True, then instead of throwing an error if you go out of
+                bounds, it will move as far as allowed.
 
         Raises:
             LibXIMCCommandFailedError: If the movement fails
+            NoUserUnitError: If you supply unit but don't define user units.
+            PositionOutOfBoundsError: If rail=False and you supply a position
+                that's out of bounds.
         """
-        if not self.unit:
-            raise NoUserUnitError()
-        # TODO: Check bounds once a zero is defined.
-        _logger.debug(f'Moving {self.name} to position {pos} {self.unit_name}')
-        self.move_to_step(int((self.unit.A * pos) // 1),
-                          int((256 * (self.unit.A * pos)) % 1))
-        # result = libximc.command_move_calb(
-        #     self.device_id,
-        #     pyximc.c_float(pos),
-        #     pyximc.byref(self.unit),
-        # )
-        # result = libximc.command_move(  # TODO: _calb gives me result = -3
-        #     self.device_id,
-        #     int((self.unit.A * pos) // 1),
-        #     int((256 * (self.unit.A * pos)) % 1),
-        # )
-        # if result != pyximc.Result.Ok:
-        #     raise LibXIMCCommandFailedError(result)
+        step, microstep = self._parse_position(pos=pos,
+                                               unit=unit,
+                                               step=step,)
+        step, microstep = self._bound_position(step=(step, microstep),
+                                               rail=rail,)
 
-    def move_by(self, by: float):
-        """
-        Move by the specified number of user units (relative positioning).
+        if self.unit is not None:
+            _logger.debug(
+                f'Moving {self.name} to step {step} + {microstep}/256 '
+                f'({self._step_to_unit((step, microstep))} {self.unit_name})'
+            )
+        else:
+            _logger.debug(
+                f'Moving {self.name} to step {step} + {microstep}/256'
+            )
+
+        result = libximc.command_move(
+            self.device_id,
+            step,
+            microstep,
+        )
+        if result != pyximc.Result.Ok:
+            raise LibXIMCCommandFailedError(result)
+
+    def move_by(self, by: Optional[Position] = None, *,
+                unit: Optional[UnitPosition] = None,
+                step: Optional[StepPosition] = None,
+                rail: bool = False):
+        """Move by the specified number of user units (relative positioning).
 
         Args:
             by (float): The number of user units to move by.
@@ -220,24 +375,36 @@ class MotorController:
             LibXIMCCommandFailedError: If the movement fails
             NoUserUnitError: If the user never defined user units.
         """
-        if not self.unit:
-            raise NoUserUnitError()
-        # TODO: Check bounds once a zero is defined.
-        _logger.debug(f'Moving {self.name} by {by} {self.unit_name}')
-        self.move_by_step(int((self.unit.A * by) // 1),
-                          int((256 * (self.unit.A * by)) % 1))
-        # result = libximc.command_movr_calb(
-        #     self.device_id,
-        #     pyximc.c_float(by),
-        #     pyximc.byref(self.unit),
-        # )
-        # result = libximc.command_movr(  # TODO: _calb gives me result = -3
-        #     self.device_id,
-        #     int((self.unit.A * by) // 1),
-        #     int((256 * (self.unit.A * by)) % 1),
-        # )
-        # if result != pyximc.Result.Ok:
-        #     raise LibXIMCCommandFailedError(result)
+        raise NotImplementedError()
+        step, microstep = self._parse_position(pos=by,
+                                               unit=unit,
+                                               step=step,)
+        to_step, to_microstep = self.get_position_step()
+        to_step += step
+        to_microstep += microstep
+        step, microstep = self._bound_position(step=(to_step, to_microstep),
+                                               rail=False,)
+        # TODO: How should this behave? Should it rail? Should I use movr or
+        #  move? Should I try to get calb_move working? It gave me -3,
+        #  ValueError, no matter what I put into it. :L
+
+        if self.unit is not None:
+            _logger.debug(
+                f'Moving {self.name} by {step} + {microstep}/256 steps'
+                f'({self._step_to_unit((step, microstep))} {self.unit_name})'
+            )
+        else:
+            _logger.debug(
+                f'Moving {self.name} by {step} + {microstep}/256 steps'
+            )
+
+        result = libximc.command_movr(
+            self.device_id,
+            step,
+            microstep,
+        )
+        if result != pyximc.Result.Ok:
+            raise LibXIMCCommandFailedError(result)
 
     def move_to_step(self, step: int, microstep: int = 0):
         """
@@ -280,6 +447,7 @@ class MotorController:
             raise LibXIMCCommandFailedError(result)
 
 
+# --- Errors ------------------------------------------------------------------
 class DeviceNotFoundError(Exception):
     """Raised when the requested device could not be captured."""
     pass
@@ -308,4 +476,9 @@ class LibXIMCCommandFailedError(Exception):
 
 class NoUserUnitError(Exception):
     """Raised when the user tries to use user units but never defined them."""
+    pass
+
+
+class PositionOutOfBoundsError(Exception):
+    """Raised when the user tries to move to a position out of bounds."""
     pass

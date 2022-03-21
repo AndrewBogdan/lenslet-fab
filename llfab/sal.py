@@ -61,6 +61,7 @@ class SixAxisLaserController:
 
     P_RADIUS_MM = 56.5  # Compare the height of the origin at p=0 and 90 deg.
     Z_ZERO_MM = 105  # Define z=0 when the v-bed is 105 mm off of the xy bed
+    # Note: The focal point of the laser is at around 150 mm off the xy bed.
     Z_DEFAULT_MM = 150  # The height which it will try to keep the origin at.
     N_DEFAULT_DEG = -45  # We don't need the n-axis to move, so fix it.
 
