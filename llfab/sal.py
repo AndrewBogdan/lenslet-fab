@@ -8,6 +8,7 @@ import enum
 import logging
 import math
 
+from llfab import ezcad
 from llfab import motor
 
 
@@ -292,6 +293,11 @@ class SixAxisLaserController:
         _logger.debug(f'Moving all motors to zero.')
         for mot in self.motors:
             mot.move_to(0)
+
+    @staticmethod
+    def lase():
+        """Run the laser. Currently just presses F2 on EZCAD."""
+        ezcad.ezcad_lase()
 
     def __del__(self):
         self.free()
