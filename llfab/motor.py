@@ -218,7 +218,7 @@ class MotorController:
         if sum([pos is not None, unit is not None, step is not None]) != 1:
             raise TypeError('Exactly one of (pos, unit, step) should be given.')
 
-        if pos:
+        if pos is not None:
             if self.unit is None:
                 # If no user unit is defined, assume they're giving a step.
                 step = pos
@@ -230,15 +230,17 @@ class MotorController:
                 #  probably want to use user units.
                 unit = pos
 
-        if unit:
+        if unit is not None:
             return self._unit_to_step(unit)
-        elif step:
+        elif step is not None:
             if isinstance(step, (tuple, list)):
                 return tuple(step)
             elif isinstance(step, int):
                 return step, 0
             elif isinstance(step, float):
                 return int(step), int((step % 0) * 256)
+            else:
+                raise TypeError('Must supply int, float, or a pair thereof.')
         assert False, 'Unreachable code'
 
     def _bound_position(self, step: StepPosition, rail=False) -> StepPosition:
@@ -307,7 +309,7 @@ class MotorController:
     # --- Settings Customization (Setters) ------------------------------------
     def set_zero(self):
         """Set the current position as zero."""
-        _logger.debug(f'Defining currently position of {self.name} as zero')
+        _logger.debug(f'Defining current position of {self.name} as zero')
         result = libximc.command_zero(
             self.device_id,
         )
@@ -456,7 +458,7 @@ class DeviceNotFoundError(Exception):
 class LibXIMCCommandFailedError(Exception):
     """Raised when a libximc command fails unexpectedly."""
 
-    DEFAULT_MSG = 'LibXIMC command failed, error code {0} ({1})'
+    DEFAULT_MSG = 'LibXIMC command failed, error code {0} ({1}).'
 
     def __init__(self, result: int, message: str = DEFAULT_MSG):
         info = 'Unknown'

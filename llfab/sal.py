@@ -2,15 +2,26 @@
 
 """
 
+from typing import Iterable, TypeAlias
+
+import enum
 import logging
 import math
-
-import numpy as np
 
 from llfab import motor
 
 
 _logger = logging.getLogger(__name__)
+
+
+class Motors(enum.Enum):
+    X = 'x'
+    Y = 'y'
+    Z = 'z'
+    N = 'n'
+    P = 'p'
+    V = 'v'
+    ALL = 'all'
 
 
 class SixAxisLaserController:
@@ -70,59 +81,159 @@ class SixAxisLaserController:
     #     'pole, then at incline=90deg, the z-axis won\'t be able to go low ' \
     #     'enough'
 
-    def __init__(self):
-        # Capture all six motors
-        self.x = motor.MotorController(serial=self.X_SERIAL, unit=self.X_UNIT)
-        self.y = motor.MotorController(serial=self.Y_SERIAL, unit=self.Y_UNIT)
-        self.z = motor.MotorController(serial=self.Z_SERIAL, unit=self.Z_UNIT)
-        self.n = motor.MotorController(serial=self.N_SERIAL, unit=self.N_UNIT)
-        self.p = motor.MotorController(serial=self.P_SERIAL, unit=self.P_UNIT)
-        self.v = motor.MotorController(serial=self.V_SERIAL, unit=self.V_UNIT)
-        self.motors = [self.x, self.y, self.z, self.n, self.p, self.v]
+    def __init__(self, capture: Iterable[Motors] | Motors = Motors.ALL):
+        # Declare (guaranteed) interface
+        self.motors: tuple[motor.MotorController]
+        self._required_motors: tuple[Motors]
+        self._six_motors: tuple[motor.MotorController | None]
+
+        # Set self._required to capture, or all the motors, if it's Motors.ALL
+        self._required_motors = tuple(capture) if capture != Motors.ALL else (
+            Motors.X, Motors.Y, Motors.Z, Motors.N, Motors.P, Motors.V,
+        )
+
+        # Capture the motors promised by self.captured
+        # I know this is a long block, but I did it explicitly instead of with
+        #  a loop because it's not iteration. It should be casework.
+        #  If you were to make it a loop, you'd be introducing the idea of a
+        #  'next' motor and that's not really intuitive.
+        self.motors = ()
+        if Motors.X in self._required_motors:
+            self.x = motor.MotorController(
+                serial=self.X_SERIAL,
+                unit=self.X_UNIT,
+            )
+            self.motors += (self.x, )
+        if Motors.Y in self._required_motors:
+            self.y = motor.MotorController(
+                serial=self.Y_SERIAL,
+                unit=self.Y_UNIT,
+            )
+            self.motors += (self.y, )
+        if Motors.Z in self._required_motors:
+            self.z = motor.MotorController(
+                serial=self.Z_SERIAL,
+                unit=self.Z_UNIT,
+            )
+            self.motors += (self.z, )
+        if Motors.N in self._required_motors:
+            self.n = motor.MotorController(
+                serial=self.N_SERIAL,
+                unit=self.N_UNIT,
+            )
+            self.motors += (self.n, )
+        if Motors.P in self._required_motors:
+            self.p = motor.MotorController(
+                serial=self.P_SERIAL,
+                unit=self.P_UNIT,
+            )
+            self.motors += (self.p, )
+        if Motors.V in self._required_motors:
+            self.v = motor.MotorController(
+                serial=self.V_SERIAL,
+                unit=self.V_UNIT,
+            )
+            self.motors += (self.v, )
+
+        # Make self._six_motors, an internal variable so I can deal with
+        #  situations where I don't need all six motors, but I do need the
+        #  order that they're normally in.
+        self._six_motors = (getattr(self, m) if hasattr(self, m) else None
+                            for m in ('x', 'y', 'z', 'n', 'p', 'v'))
+
         # TODO: Set up bounds
 
-    def get_origin(self):
-        """Return the (expected) current location of the origin."""
-        return self.calc_origin(*self.get_position())
+    def _check_captured(self, *motors: Motors):
+        """Returns True if all of the specified motors were required at
+        at instantiation and raise a MissingMotorError otherwise"""
+        if Motors.ALL in motors:
+            motors = [
+                Motors.X, Motors.Y, Motors.Z, Motors.N, Motors.P, Motors.V,
+            ]
 
-    def calc_origin(self, x_mm, y_mm, z_mm, n_deg, p_deg, v_deg):
+        if all(m in self._required_motors for m in motors):
+            return True
+
+        raise MissingMotorError(
+            need=motors,
+            captured=self._required_motors,
+        )
+
+    @classmethod
+    def calc_origin(cls, x_mm, y_mm, z_mm, n_deg, p_deg, v_deg):
         """Calculates the expected location of the origin given positions."""
         n_rad = math.radians(n_deg)
         p_rad = math.radians(p_deg)
         # v_rad = math.radians(v_deg)
 
         return (
-            x_mm - self.P_RADIUS_MM * math.sin(p_rad) * math.sin(n_rad),
-            y_mm + self.P_RADIUS_MM * math.sin(p_rad) * math.cos(n_rad),
-            z_mm + self.Z_ZERO_MM + self.P_RADIUS_MM * (1 - math.cos(p_rad)),
+            x_mm - cls.P_RADIUS_MM * math.sin(p_rad) * math.sin(n_rad),
+            y_mm + cls.P_RADIUS_MM * math.sin(p_rad) * math.cos(n_rad),
+            z_mm + cls.Z_ZERO_MM + cls.P_RADIUS_MM * (1 - math.cos(p_rad)),
         )
 
-    def get_position(self):
-        """Return a tuple of all the motors' positions."""
-        return [m.get_position() for m in self.motors]
+    def get_origin(self):
+        """Return the (expected) current location of the origin in XYZ."""
+        return self.calc_origin(*self.get_position())
 
-    def get_position_step(self):
-        """Return a tuple of all the motors' positions in steps."""
-        return [m.get_position_step()[0] for m in self.motors]
+    def get_position(self) -> tuple[float]:
+        """Return a tuple of all the motors' positions. Defaults to 0 for
+        non-captured motors."""
+        return tuple(float(m.get_position()) if m is not None else 0.0
+                     for m in self._six_motors)
 
-    def get_position_microstep(self):
-        """Return a tuple of all the motors' positions in steps."""
-        return [m.get_position_step()[1] for m in self.motors]
+    def get_position_step(self) -> tuple[int]:
+        """Return a tuple of all the motors' positions in steps. Defaults to
+        0 for non-captured motors."""
+        return tuple(int(m.get_position_step()[0]) if m is not None else 0
+                     for m in self._six_motors)
+
+    def get_position_microstep(self) -> tuple[int]:
+        """Return a tuple of all the motors' positions in steps. Defaults to
+        0 for non-captured motors."""
+        return tuple(int(m.get_position_step()[1]) if m is not None else 0
+                     for m in self._six_motors)
 
     def set_zero(self):
         """Set the current position as zero."""
         _logger.info('Defining current 6-axis position as zero.')
-        self.x.set_zero()
-        self.y.set_zero()
-        self.z.set_zero()
-        self.n.set_zero()
-        self.p.set_zero()
-        self.v.set_zero()
+        for mot in self.motors:
+            mot.set_zero()
 
-    def to_pos(self, azimuth: float, incline: float, height=Z_DEFAULT_MM):
-        """TODO
+    def to_xy_pos(self, x_mm: float, y_mm: float, rail: bool = False):
+        """Moves the 6-axis in X and Y, in mm.
 
+        Requires those two motors. To move step-wise, see
+        MotorController.move_to and just access SALC.x and SALC.y manually.
+
+        Args:
+            x_mm: The x-position to go to, in millimeters.
+            y_mm: The y-position to go to, in millimeters.
+            rail: If True, then instead of throwing an error if you go out of
+                bounds, it will move as far as allowed.
+
+        Raises:
+            MissingMotorError: If you did not capture motors X and Y.
+            LibXIMCCommandFailedError: If the movement fails.
+            NoUserUnitError: If you supply unit but don't define user units.
+            PositionOutOfBoundsError: If rail=False and you supply a position
+                that's out of bounds.
         """
+        self._check_captured(Motors.X, Motors.Y)
+
+        self.x.move_to(unit=x_mm, rail=rail)
+        self.y.move_to(unit=y_mm, rail=rail)
+
+    def to_spherical_pos(
+            self,
+            azimuth: float,
+            incline: float,
+            height: float = Z_DEFAULT_MM,
+    ):
+        """Moves the 6-axis to the given spherical coordinates, in degrees.
+        Requires all six motors to be captured."""
+        self._check_captured(Motors.ALL)
+
         # The angles are independent, and we calculate the xyz.
         n_deg = self.N_DEFAULT_DEG
         p_deg = incline
@@ -144,26 +255,38 @@ class SixAxisLaserController:
                       f'{int(o_pos[1])}mm, {int(o_pos[2])}mm)')
 
         # Actually move it.
-        self.x.move_to(x_mm)
-        self.y.move_to(y_mm)
-        self.z.move_to(z_mm)
-        self.n.move_to(n_deg)
-        self.p.move_to(p_deg)
-        self.v.move_to(v_deg)
+        self.x.move_to(unit=x_mm)
+        self.y.move_to(unit=y_mm)
+        self.z.move_to(unit=z_mm)
+        self.n.move_to(unit=n_deg)
+        self.p.move_to(unit=p_deg)
+        self.v.move_to(unit=v_deg)
 
     def to_zero(self):
         """Move all motors to their zero position."""
         _logger.debug(f'Moving all motors to zero.')
-        self.x.move_to(0)
-        self.y.move_to(0)
-        self.z.move_to(0)
-        self.n.move_to(0)
-        self.p.move_to(0)
-        self.v.move_to(0)
+        for mot in self.motors:
+            mot.move_to(0)
 
     # TODO: Make the __del__ so that when the class is destroyed, it releases
     #  the motors.
 
 
 # The name's too long
-SALC = SixAxisLaserController
+SALC: TypeAlias = SixAxisLaserController
+
+
+class MissingMotorError(Exception):
+    """Raised when a function is called that requires motors which SALC did not
+    capture."""
+
+    DEFAULT_MSG = 'Motors {0} required to use this function, missing {1}.'
+
+    def __init__(self,
+                 need: Iterable[Motors],
+                 captured: Iterable[Motors],
+                 message: str = DEFAULT_MSG):
+        need_msg = ''.join(f'{str(m.value).upper()}, ' for m in need)[:-2]
+        missing_msg = ''.join(f'{str(m.value).upper()}, ' for m in need
+                              if m not in captured)[:-2]
+        super().__init__(message.format(need_msg, missing_msg))
