@@ -81,9 +81,24 @@ class SixAxisLaserController:
     #     'pole, then at incline=90deg, the z-axis won\'t be able to go low ' \
     #     'enough'
 
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        new_instance = super().__new__(cls)
+
+        # Specifically use SixAxisLaserController._instance instead of
+        #  cls._instances because subclassing this doesn't double the number of
+        #  motors available for capture.
+        if SixAxisLaserController._instance is not None:
+            _logger.debug('Freeing previous instance of SALC.')
+            SixAxisLaserController._instance.free()
+        SixAxisLaserController._instance = new_instance
+        return new_instance
+
     def __init__(self, capture: Iterable[Motors] | Motors = Motors.ALL):
         # Declare (guaranteed) interface
         self.motors: tuple[motor.MotorController]
+        self._free: bool = True  # If I am ._free, I don't need to be .free()d.
         self._required_motors: tuple[Motors]
         self._six_motors: tuple[motor.MotorController | None]
 
@@ -98,6 +113,7 @@ class SixAxisLaserController:
         #  If you were to make it a loop, you'd be introducing the idea of a
         #  'next' motor and that's not really intuitive.
         self.motors = ()
+        self._free = False  # .free() can be called once self.motors exists.
         if Motors.X in self._required_motors:
             self.x = motor.MotorController(
                 serial=self.X_SERIAL,
@@ -172,6 +188,15 @@ class SixAxisLaserController:
             z_mm + cls.Z_ZERO_MM + cls.P_RADIUS_MM * (1 - math.cos(p_rad)),
         )
 
+    def free(self):
+        """Free all captured motors."""
+        if self._free:
+            _logger.debug('SALC.motors does not exist, nothing to free.')
+            return
+        for mot in self.motors:
+            mot.free()
+        self._free = True
+
     def get_origin(self):
         """Return the (expected) current location of the origin in XYZ."""
         return self.calc_origin(*self.get_position())
@@ -199,30 +224,6 @@ class SixAxisLaserController:
         _logger.info('Defining current 6-axis position as zero.')
         for mot in self.motors:
             mot.set_zero()
-
-    def to_xy_pos(self, x_mm: float, y_mm: float, rail: bool = False):
-        """Moves the 6-axis in X and Y, in mm.
-
-        Requires those two motors. To move step-wise, see
-        MotorController.move_to and just access SALC.x and SALC.y manually.
-
-        Args:
-            x_mm: The x-position to go to, in millimeters.
-            y_mm: The y-position to go to, in millimeters.
-            rail: If True, then instead of throwing an error if you go out of
-                bounds, it will move as far as allowed.
-
-        Raises:
-            MissingMotorError: If you did not capture motors X and Y.
-            LibXIMCCommandFailedError: If the movement fails.
-            NoUserUnitError: If you supply unit but don't define user units.
-            PositionOutOfBoundsError: If rail=False and you supply a position
-                that's out of bounds.
-        """
-        self._check_captured(Motors.X, Motors.Y)
-
-        self.x.move_to(unit=x_mm, rail=rail)
-        self.y.move_to(unit=y_mm, rail=rail)
 
     def to_spherical_pos(
             self,
@@ -262,14 +263,38 @@ class SixAxisLaserController:
         self.p.move_to(unit=p_deg)
         self.v.move_to(unit=v_deg)
 
+    def to_xy_pos(self, x_mm: float, y_mm: float, rail: bool = False):
+        """Moves the 6-axis in X and Y, in mm.
+
+        Requires those two motors. To move step-wise, see
+        MotorController.move_to and just access SALC.x and SALC.y manually.
+
+        Args:
+            x_mm: The x-position to go to, in millimeters.
+            y_mm: The y-position to go to, in millimeters.
+            rail: If True, then instead of throwing an error if you go out of
+                bounds, it will move as far as allowed.
+
+        Raises:
+            MissingMotorError: If you did not capture motors X and Y.
+            LibXIMCCommandFailedError: If the movement fails.
+            NoUserUnitError: If you supply unit but don't define user units.
+            PositionOutOfBoundsError: If rail=False and you supply a position
+                that's out of bounds.
+        """
+        self._check_captured(Motors.X, Motors.Y)
+
+        self.x.move_to(unit=x_mm, rail=rail)
+        self.y.move_to(unit=y_mm, rail=rail)
+
     def to_zero(self):
         """Move all motors to their zero position."""
         _logger.debug(f'Moving all motors to zero.')
         for mot in self.motors:
             mot.move_to(0)
 
-    # TODO: Make the __del__ so that when the class is destroyed, it releases
-    #  the motors.
+    def __del__(self):
+        self.free()
 
 
 # The name's too long

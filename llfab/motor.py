@@ -41,6 +41,7 @@ class MotorController:
         self.unit_name: Optional[str] = None
         self.bounds: (Optional[StepPosition, Optional[StepPosition]]) = \
             (None, None)
+        self._free: bool = True  # If I am ._free, I don't need to be .free()d.
 
         # --- Setup ---
         self._capture_device_by_serial(serial)
@@ -118,6 +119,7 @@ class MotorController:
                 self.name = friendly_name
                 self.device_id = device_id
                 self.serial = serial_num
+                self._free = False  # I have a device_id, I need to be freed.
                 return
 
         # Raise an error because we couldn't find our device
@@ -151,6 +153,21 @@ class MotorController:
         if upper is not None:
             upper = self._parse_position(pos=upper)
         self.bounds = (lower, upper)
+
+    # --- De-Initialization ---------------------------------------------------
+    def free(self):
+        """Releases the captured device."""
+        if self._free:
+            _logger.debug(f'No device captured, nothing to free.')
+            return
+        _logger.debug(f'Freeing motor {self.name}.')
+        device_id_struct = pyximc.c_int(self.device_id)
+        result = libximc.close_device(
+            pyximc.byref(device_id_struct)
+        )
+        if result != pyximc.Result.Ok:
+            raise LibXIMCCommandFailedError(result)
+        self._free = True
 
     # --- Utility -------------------------------------------------------------
     def _unit_to_step(self, amount: UnitPosition) -> StepPosition:
@@ -447,6 +464,10 @@ class MotorController:
         )
         if result != pyximc.Result.Ok:
             raise LibXIMCCommandFailedError(result)
+
+    # --- Magic Methods -------------------------------------------------------
+    def __del__(self):
+        self.free()
 
 
 # --- Errors ------------------------------------------------------------------
