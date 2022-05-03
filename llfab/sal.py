@@ -156,8 +156,8 @@ class SixAxisLaserController:
         # Make self._six_motors, an internal variable so I can deal with
         #  situations where I don't need all six motors, but I do need the
         #  order that they're normally in.
-        self._six_motors = (getattr(self, m) if hasattr(self, m) else None
-                            for m in ('x', 'y', 'z', 'n', 'p', 'v'))
+        self._six_motors = tuple(getattr(self, m) if hasattr(self, m) else None
+                                 for m in ('x', 'y', 'z', 'n', 'p', 'v'))
 
         # TODO: Set up bounds
 
