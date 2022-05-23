@@ -12,6 +12,7 @@ import math
 
 from numpy.typing import NDArray
 import matplotlib.pyplot as plt
+from matplotlib import ticker
 import numpy as np
 
 from llfab import motor
@@ -69,25 +70,15 @@ class _Toolpath(Iterator):
         insts: list[Instruction] = []
         positions: list[SALPosition] = [(0,) * 6]
         lases: list[SALPosition] = []
-        # waits: list[tuple[SALPositionXY, float]] = []
 
         pos: SALPositionNP = np.array((0.0,) * 6)
-        # mov: SALPositionNP = np.array((0.0,) * 6)
 
         def record_position():
             nonlocal pos
             # If we have changed positions, log the new position.
             if tuple(pos) != positions[-1]:
-                # mov = np.array((0.0, ) * 6)
                 positions.append(tuple(pos))
                 insts.append((Inst.GO, *pos))
-
-        # def record_movement():
-        #     # If we've moved, record a movement instruction
-        #     nonlocal mov
-        #     if any(mov):
-        #         insts.append((Inst.MOVE, *mov))
-        #         mov = np.array((0.0, ) * 6)
 
         for instruction in inst_iterator:
             match instruction:
@@ -95,17 +86,14 @@ class _Toolpath(Iterator):
                     mov_by = np.array(mov_by)
                     mov_by.resize((6, ))
                     pos += mov_by
-                    # mov += mov_by
 
                 case (Inst.GO, *pos_to):
                     pos_to = np.array(pos_to)
                     pos_to.resize((6, ))
                     pos = pos_to.copy()
-                    # mov = np.array((0.0, ) * 6)
 
                 case Inst.RETURN:
                     pos = np.array((0.0, ) * 6)
-                    # mov = np.array((0.0, ) * 6)
                     record_position()
                     insts.append((Inst.GO, *pos.copy()))
 
@@ -113,18 +101,9 @@ class _Toolpath(Iterator):
                     # This doesn't actually correspond to any instruction,
                     #  it just separates movements (prevents them from being
                     #  rolled into one instruction).
-                    # record_movement()
                     record_position()
-                    # waits.append((tuple(pos), 0))
-
-                # case (Inst.WAIT, duration):
-                #     record_movement()
-                #     record_position()
-                #     # waits.append((tuple(pos), duration))
-                #     insts.append(instruction)
 
                 case Inst.LASE:
-                    # record_movement()
                     record_position()
                     lases.append(tuple(pos))
                     insts.append(instruction)
@@ -158,8 +137,19 @@ class _Toolpath(Iterator):
             ax = plt.gca()
             ax.set_aspect('equal', adjustable='box')
 
-        pos_x, pos_y, _, _, _, _ = zip(*self._positions[self._pos_num:])
+        # These represent the current state, and if we're finished, there's
+        #  special behavior.
+        pos_num = self._pos_num if self._pos_num != len(self._positions) else -1
+        lase_num = self._lase_num if self._lase_num != len(self._lases) else -1
+
+        pos_x, pos_y, _, _, _, _ = zip(*self._positions[pos_num:])
         lase_x, lase_y, _, _, _, _ = zip(*self._lases)
+
+        # Change from um to m
+        pos_x = np.array(pos_x) / 1e6
+        pos_y = np.array(pos_y) / 1e6
+        lase_x = np.array(lase_x) / 1e6
+        lase_y = np.array(lase_y) / 1e6
 
         # Plot the positions, the actual tool's path, as a line
         ax.plot(
@@ -171,8 +161,7 @@ class _Toolpath(Iterator):
                       ['orange'] * (len(self._lases) - self._lase_num)
         lase_colors[0] = 'green'
         lase_colors[-1] = 'orangered'
-        if self._lase_num != len(self._lases):
-            lase_colors[self._lase_num] = 'yellow'
+        lase_colors[lase_num] = 'yellow'
 
         ax.scatter(
             lase_x, lase_y,
@@ -181,8 +170,11 @@ class _Toolpath(Iterator):
             marker='H',
         )
 
-        ax.set_xlabel('X (mm)')
-        ax.set_ylabel('Y (mm)')
+        ax.xaxis.set_major_formatter(ticker.EngFormatter(unit='m'))
+        ax.yaxis.set_major_formatter(ticker.EngFormatter(unit='m'))
+
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
 
         return ax
 

@@ -7,6 +7,8 @@ I'll write something here once I have a reason to.
 
 ## To-Do List
 
+0. There are rounding errors in the user unit code! Micrometers is not working.
+   - Make a motor.resolution thing
 1. Real xy=0 (configurable)
    - This also requires bound-defining
    - These would also be good to put in a config, you'd need to do it all
@@ -15,3 +17,5 @@ I'll write something here once I have a reason to.
 2. Lase hexagonally a large circle
 3. Cut code
 4. Gas
+5. Make a break=True/False option to have movement commands wait until they're
+   completed to exit.

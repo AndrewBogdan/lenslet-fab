@@ -14,7 +14,7 @@ from llfab.harness import Inst as In
 @harness.toolpath
 def path_xy_grid(
     shape: tuple[int, int] = (10, 10),
-    stride: tuple[float, float] = (1.0, 1.0),
+    stride: tuple[float, float] = (1000.0, 1000.0),
 ):
     """Lase in a rectangular grid.
 
@@ -95,8 +95,8 @@ def path_xy_hex_grid(
 
 @harness.toolpath
 def path_xy_hex_grid_circle(
-    radius: float = 5.0,
-    pitch: tuple = (1.0, 1.0),
+    radius: float = 500.0,
+    pitch: tuple = (100.0, 115.47),
 ):
     """Lase a circular region in a hexagonal pattern.
 
@@ -139,8 +139,8 @@ def path_xy_hex_grid_circle(
 
 @harness.toolpath
 def path_xy_circle(
-    radius: float = 10.0,
-    stride: float = 1.0,
+    radius: float = 500.0,
+    stride: float = 100.0,
 ):
     """Lase in a circle, centered at the starting point.
 
@@ -155,7 +155,7 @@ def path_xy_circle(
     angle = 0
 
     while angle < 2 * math.pi:
-        yield In.GO, math.cos(angle), math.sin(angle)
+        yield In.GO, math.cos(angle) * radius, math.sin(angle) * radius
         angle += stride_angle
         yield In.LASE
     yield In.RETURN

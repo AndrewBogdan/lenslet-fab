@@ -63,22 +63,22 @@ class SixAxisLaserController:
     P_SERIAL = 17638
     V_SERIAL = 17607
 
-    X_UNIT = (100, 'mm')
-    Y_UNIT = (100, 'mm')
-    Z_UNIT = (399.40625, 'mm')
+    X_UNIT = (0.1, 'um')
+    Y_UNIT = (0.1, 'um')
+    Z_UNIT = (0.39940625, 'um')
     N_UNIT = (99.88, 'deg')
     P_UNIT = (-100.4, 'deg')
     V_UNIT = (-99.87, 'deg')
 
     Z_BOUNDS = (0, 45)  # TODO
 
-    P_RADIUS_MM = 56.5  # Compare the height of the origin at p=0 and 90 deg.
-    Z_ZERO_MM = 105  # Define z=0 when the v-bed is 105 mm off of the xy bed
-    # Note: The focal point of the laser is at around 150 mm off the xy bed.
-    Z_DEFAULT_MM = 150  # The height which it will try to keep the origin at.
+    P_RADIUS_UM = 56.5e3  # Compare the height of the origin at p=0 and 90 deg.
+    Z_ZERO_UM = 105e3  # Define z=0 when the v-bed is 105 um off of the xy bed
+    # Note: The focal point of the laser is at around 150 um off the xy bed.
+    Z_DEFAULT_UM = 150e3  # The height which it will try to keep the origin at.
     N_DEFAULT_DEG = -45  # We don't need the n-axis to move, so fix it.
 
-    # assert Z_DEFAULT_MM > Z_ZERO_MM + P_RADIUS_MM, 'If the default z ' \
+    # assert Z_DEFAULT_UM > Z_ZERO_UM + P_RADIUS_UM, 'If the default z ' \
     #     'position for the lenslet is less than the height of the P_Axis\'s ' \
     #     'pole, then at incline=90deg, the z-axis won\'t be able to go low ' \
     #     'enough'
@@ -178,16 +178,16 @@ class SixAxisLaserController:
         )
 
     @classmethod
-    def calc_origin(cls, x_mm, y_mm, z_mm, n_deg, p_deg, v_deg):
+    def calc_origin(cls, x_um, y_um, z_um, n_deg, p_deg, v_deg):
         """Calculates the expected location of the origin given positions."""
         n_rad = math.radians(n_deg)
         p_rad = math.radians(p_deg)
         # v_rad = math.radians(v_deg)
 
         return (
-            x_mm - cls.P_RADIUS_MM * math.sin(p_rad) * math.sin(n_rad),
-            y_mm + cls.P_RADIUS_MM * math.sin(p_rad) * math.cos(n_rad),
-            z_mm + cls.Z_ZERO_MM + cls.P_RADIUS_MM * (1 - math.cos(p_rad)),
+            x_um - cls.P_RADIUS_UM * math.sin(p_rad) * math.sin(n_rad),
+            y_um + cls.P_RADIUS_UM * math.sin(p_rad) * math.cos(n_rad),
+            z_um + cls.Z_ZERO_UM + cls.P_RADIUS_UM * (1 - math.cos(p_rad)),
         )
 
     def free(self):
@@ -231,7 +231,7 @@ class SixAxisLaserController:
             self,
             azimuth: float,
             incline: float,
-            height: float = Z_DEFAULT_MM,
+            height: float = Z_DEFAULT_UM,
     ):
         """Moves the 6-axis to the given spherical coordinates, in degrees.
         Requires all six motors to be captured."""
@@ -248,32 +248,32 @@ class SixAxisLaserController:
         # v_rad = math.radians(azimuth)
 
         # Calculate where each stepper should go to
-        x_mm = (self.P_RADIUS_MM * math.sin(p_rad) * math.sin(n_rad))
-        y_mm = (-self.P_RADIUS_MM * math.sin(p_rad) * math.cos(n_rad))
-        z_mm = (height - self.Z_ZERO_MM - self.P_RADIUS_MM *
+        x_um = (self.P_RADIUS_UM * math.sin(p_rad) * math.sin(n_rad))
+        y_um = (-self.P_RADIUS_UM * math.sin(p_rad) * math.cos(n_rad))
+        z_um = (height - self.Z_ZERO_UM - self.P_RADIUS_UM *
                 (1 - math.cos(p_rad)))
 
-        o_pos = self.calc_origin(x_mm, y_mm, z_mm, n_deg, p_deg, v_deg)
-        _logger.debug(f'Moving origin to ({int(o_pos[0])}mm, '
-                      f'{int(o_pos[1])}mm, {int(o_pos[2])}mm)')
+        o_pos = self.calc_origin(x_um, y_um, z_um, n_deg, p_deg, v_deg)
+        _logger.debug(f'Moving origin to ({int(o_pos[0])}um, '
+                      f'{int(o_pos[1])}um, {int(o_pos[2])}um)')
 
         # Actually move it.
-        self.x.move_to(unit=x_mm)
-        self.y.move_to(unit=y_mm)
-        self.z.move_to(unit=z_mm)
+        self.x.move_to(unit=x_um)
+        self.y.move_to(unit=y_um)
+        self.z.move_to(unit=z_um)
         self.n.move_to(unit=n_deg)
         self.p.move_to(unit=p_deg)
         self.v.move_to(unit=v_deg)
 
-    def to_pos_xy(self, x_mm: float, y_mm: float, rail: bool = False):
-        """Moves the 6-axis in X and Y, in mm.
+    def to_pos_xy(self, x_um: float, y_um: float, rail: bool = False):
+        """Moves the 6-axis in X and Y, in um.
 
         Requires those two motors. To move step-wise, see
         MotorController.move_to and just access SALC.x and SALC.y manually.
 
         Args:
-            x_mm: The x-position to go to, in millimeters.
-            y_mm: The y-position to go to, in millimeters.
+            x_um: The x-position to go to, in micrometers.
+            y_um: The y-position to go to, in micrometers.
             rail: If True, then instead of throwing an error if you go out of
                 bounds, it will move as far as allowed.
 
@@ -286,8 +286,8 @@ class SixAxisLaserController:
         """
         self._check_captured(Motors.X, Motors.Y)
 
-        self.x.move_to(unit=x_mm, rail=rail)
-        self.y.move_to(unit=y_mm, rail=rail)
+        self.x.move_to(unit=x_um, rail=rail)
+        self.y.move_to(unit=y_um, rail=rail)
 
     def to_zero(self):
         """Move all motors to their zero position."""
