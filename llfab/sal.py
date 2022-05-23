@@ -265,7 +265,7 @@ class SixAxisLaserController:
         self.p.move_to(unit=p_deg)
         self.v.move_to(unit=v_deg)
 
-    def to_xy_pos(self, x_mm: float, y_mm: float, rail: bool = False):
+    def to_pos_xy(self, x_mm: float, y_mm: float, rail: bool = False):
         """Moves the 6-axis in X and Y, in mm.
 
         Requires those two motors. To move step-wise, see

@@ -394,15 +394,14 @@ class MotorController:
             LibXIMCCommandFailedError: If the movement fails
             NoUserUnitError: If the user never defined user units.
         """
-        raise NotImplementedError()
         step, microstep = self._parse_position(pos=by,
                                                unit=unit,
                                                step=step,)
-        to_step, to_microstep = self.get_position_step()
-        to_step += step
-        to_microstep += microstep
-        step, microstep = self._bound_position(step=(to_step, to_microstep),
-                                               rail=False,)
+        # to_step, to_microstep = self.get_position_step()
+        # to_step += step
+        # to_microstep += microstep
+        # step, microstep = self._bound_position(step=(to_step, to_microstep),
+        #                                        rail=False,)
         # TODO: How should this behave? Should it rail? Should I use movr or
         #  move? Should I try to get calb_move working? It gave me -3,
         #  ValueError, no matter what I put into it. :L
