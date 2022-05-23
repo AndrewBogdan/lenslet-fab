@@ -22,8 +22,6 @@ class Inst(enum.Enum):
     MOVE = 'MOVE'
     GO = 'GO'
     LASE = 'LASE'
-
-    # Psuedo-instructions/Directives
     FENCE = 'FENCE'
     RETURN = 'RETURN'
 

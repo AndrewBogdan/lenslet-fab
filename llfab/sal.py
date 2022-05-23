@@ -2,7 +2,7 @@
 
 """
 
-from typing import Iterable, TypeAlias
+from typing import Iterable, TypeAlias, Optional
 
 import enum
 import logging
@@ -190,6 +190,59 @@ class SixAxisLaserController:
             z_um + cls.Z_ZERO_UM + cls.P_RADIUS_UM * (1 - math.cos(p_rad)),
         )
 
+    def at(self,
+           x_um: Optional[float] = None,
+           y_um: Optional[float] = None,
+           z_um: Optional[float] = None,
+           n_deg: Optional[float] = None,
+           p_deg: Optional[float] = None,
+           v_deg: Optional[float] = None) -> bool:
+        """Check if the arm is at the given coordinates.
+
+        All coordinates are optional. If you give any value for a motor that
+        you don't have captured, it will error.
+
+        Args:
+            x_um: The x-coordinate, in micrometers.
+            y_um: The y-coordinate, in micrometers.
+            z_um: The z-coordinate, in micrometers.
+            n_deg: The n-coordinate, in degrees.
+            p_deg: The p-coordinate, in degrees.
+            v_deg: The v-coordinate, in degrees.
+
+        Raises:
+            MissingMotorError: If you try to check a motor you haven't captured.
+
+        Returns: True if the motors are within a microstep of the given
+        coordinates, False otherwise.
+        """
+        all_motors = [Motors.X, Motors.Y, Motors.Z, Motors.N, Motors.P,
+                      Motors.V]
+        units = [self.X_UNIT, self.Y_UNIT, self.Z_UNIT, self.N_UNIT,
+                 self.P_UNIT, self.V_UNIT]
+        coords = (x_um, y_um, z_um, n_deg, p_deg, v_deg)
+
+        # Check that we have captured all the motors we're asking about.
+        required = [mot for index, mot in enumerate(all_motors)
+                    if coords[index] is not None]
+        self._check_captured(*required)
+
+        # Get the current position
+        pos = self.get_position()
+
+        # For each coordinate, check if we're within a microstep.
+        for coord, ax_pos, (scale, _) in zip(coords, pos, units):
+            if coord is None: continue
+
+            # We want units per microstep, as this is going to be the
+            #  acceptable rounding error. Scale is (steps / unit), so we will
+            #  get (units / microstep) via
+            #  1 / ((steps / unit) * (microsteps / step))
+            error = 1 / (scale * 256)
+            if not (ax_pos - error < coord < ax_pos + error):
+                return False
+        return True
+
     def free(self):
         """Free all captured motors."""
         if self._free:
@@ -280,7 +333,6 @@ class SixAxisLaserController:
         Raises:
             MissingMotorError: If you did not capture motors X and Y.
             LibXIMCCommandFailedError: If the movement fails.
-            NoUserUnitError: If you supply unit but don't define user units.
             PositionOutOfBoundsError: If rail=False and you supply a position
                 that's out of bounds.
         """

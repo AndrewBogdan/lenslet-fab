@@ -7,8 +7,6 @@ I'll write something here once I have a reason to.
 
 ## To-Do List
 
-0. There are rounding errors in the user unit code! Micrometers is not working.
-   - Make a motor.resolution thing
 1. Real xy=0 (configurable)
    - This also requires bound-defining
    - These would also be good to put in a config, you'd need to do it all

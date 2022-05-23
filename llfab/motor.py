@@ -187,7 +187,7 @@ class MotorController:
             raise NoUserUnitError()
         return \
             int((self.unit.A * amount) // 1), \
-            int((256 * (self.unit.A * amount)) % 1)
+            int(256 * ((self.unit.A * amount) % 1))
 
     def _step_to_unit(self, step: StepPosition) -> UnitPosition:
         """Convert a position or offset from steps to user units.
@@ -255,7 +255,7 @@ class MotorController:
             elif isinstance(step, int):
                 return step, 0
             elif isinstance(step, float):
-                return int(step), int((step % 0) * 256)
+                return int(step), int((step % 1) * 256)
             else:
                 raise TypeError('Must supply int, float, or a pair thereof.')
         assert False, 'Unreachable code'
@@ -360,8 +360,8 @@ class MotorController:
         step, microstep = self._parse_position(pos=pos,
                                                unit=unit,
                                                step=step,)
-        step, microstep = self._bound_position(step=(step, microstep),
-                                               rail=rail,)
+        # step, microstep = self._bound_position(step=(step, microstep),
+        #                                        rail=rail,)
 
         if self.unit is not None:
             _logger.debug(
