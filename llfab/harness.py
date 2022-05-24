@@ -121,16 +121,38 @@ class _Toolpath(Iterator):
                 self._lase_num += 1
         self._pointer += 1
 
-    def plot_xy(self, ax=None):
+    def plot_xy(self, ax=None, /,
+                lase_colors=(
+                    # '#9BC53D', '#508484', '#7E52A0', '#4A4238', '#E63946',
+                    'green', 'yellowgreen', 'yellow', 'orange', 'orangered',
+                ),
+                args_path=None,
+                args_lase=None,
+                args_start=None,
+                args_end=None):
         """Plot the toolpath in the Cartesian plane with X and Y.
 
         Args:
             ax: The matplotlib axis to plot on. Will try to a square one by
                 default.
+            lase_colors: (a sequence of 5 matplotlib colors) The colors of the
+                lase markers, in the order (starting lase, finished lases,
+                current lase, future lases, last lase).
+            args_path: Arguments for the path line, passed to plt.plot.
+            args_lase: Arguments for the lase markers, passed to plt.scatter.
+            args_start: Arguments for the start position marker, passed to
+                plt.scatter.
+            args_end: Arguments for the end position marker, passed to
+                plt.scatter.
 
         Returns:
             The axis ax, whichever was plotted on.
         """
+        args_path = args_path or {}
+        args_lase = args_lase or {}
+        args_start = args_start or {}
+        args_end = args_end or {}
+
         if ax is None:
             ax = plt.gca()
             ax.set_aspect('equal', adjustable='box')
@@ -149,30 +171,52 @@ class _Toolpath(Iterator):
         lase_x = np.array(lase_x) / 1e6
         lase_y = np.array(lase_y) / 1e6
 
+        # Color-code the lases
+        lc_first, lc_done, lc_current, lc_todo, lc_last = lase_colors
+        lase_c = [lc_done] * self._lase_num + \
+                 [lc_todo] * (len(self._lases) - self._lase_num)
+        lase_c[lase_num] = lc_current
+        lase_c[0] = lc_first
+        lase_c[-1] = lc_last
+
         # Plot the positions, the actual tool's path, as a line
         ax.plot(
-            pos_x, pos_y,
+            pos_y, pos_x,
+            color=args_path.pop('color', '#0C0A3E'),
+            **args_path
         )
 
-        # Plot the lases as a hexagons
-        lase_colors = ['yellowgreen'] * self._lase_num + \
-                      ['orange'] * (len(self._lases) - self._lase_num)
-        lase_colors[0] = 'green'
-        lase_colors[-1] = 'orangered'
-        lase_colors[lase_num] = 'yellow'
-
+        # Plot the lases
         ax.scatter(
-            lase_x, lase_y,
-            s=400,
-            c=lase_colors,
-            marker='H',
+            lase_y, lase_x,
+            s=args_lase.pop('s', 200),
+            c=args_lase.pop('c', lase_c),
+            marker=args_lase.pop('marker', 'H'),
+            **args_lase
+        )
+
+        # Plot the start and end points
+        ax.scatter(
+            [self._positions[-1][1]], [self._positions[-1][0]],
+            s=args_end.pop('s', 50),
+            c=args_end.pop('c', 'red'),
+            marker=args_end.pop('marker', 's'),
+            **args_end
+        )
+        ax.scatter(
+            [self._positions[0][1]], [self._positions[0][0]],
+            s=args_start.pop('s', 100),
+            c=args_start.pop('c', 'green'),
+            marker=args_start.pop('marker', '>'),
+            **args_start
         )
 
         ax.xaxis.set_major_formatter(ticker.EngFormatter(unit='m'))
         ax.yaxis.set_major_formatter(ticker.EngFormatter(unit='m'))
 
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
+        ax.set_xlabel('Y')
+        ax.set_ylabel('X')
+        ax.invert_xaxis()
 
         return ax
 
