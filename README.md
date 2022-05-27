@@ -10,7 +10,7 @@ I'll write something here once I have a reason to.
 0. Plotting
    - Automatically adjust marker size based on number of elements (or maybe 
        the minimum distance between them?)
-   - Rotate plot to match how we look at it. (Ask Shawn if it's correct)
+   - Ask Shawn if the rotated toolpath is correct
 1. Harness
     - Make it not in the iPython notebook
     - Make sure we don't lase the same spot twice (a check routine)
@@ -29,16 +29,22 @@ I'll write something here once I have a reason to.
    - Idea: use the rail to set limits?
    - Know beforehand if a toolpath is out of bounds
    - Allow plotting absolute coordinates too (?)
-   - Move arm geometry to config file
+   - Remove old bound code
+   - Implement optional railing behavior.
 3. Spherical Path
    - Arguments: pitch, diameter/radius, and angle from zenith (inside of cone)
    - Tessolate the sphere with triangles (icosahedron-based?)
    - Pitch is spherical/geodesic distance
    - 3D graph it: Shawn likes the graphing!
+   - Need a GO_SPH instruction or something
 4. Gas
 5. Make a break=True/False option to have movement commands wait until they're
    completed to exit.
 6. Switch to using divmod for steps, microsteps (bruh)
+   - Test _unit_to_step, make sure it respects microsteps being unsigned.
 7. Documentation
    - Fix typehints across all files
    - Get Sphinx or something similar
+   - Change get_position_step to be an option in get_position, and have it
+       give a MotorPosition type or something.
+   - Standardize move_to, move_by, etc.

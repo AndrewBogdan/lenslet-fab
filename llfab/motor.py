@@ -1,12 +1,17 @@
 """
 Module for controlling the motors through pyximc.
 """
-
+import warnings
 from typing import TypeAlias, Optional, Tuple
+
+import enum
 import logging
+import math
 
 import pyximc
 from pyximc import lib as libximc
+
+from llfab import util
 
 # --- Module Definitions ------------------------------------------------------
 # TODO: Does this make the code more or less clear?
@@ -28,8 +33,7 @@ class MotorController:
 
     def __init__(self,
                  serial: int,
-                 unit: Optional[Tuple[float, str]] = None,
-                 bounds: Optional[Tuple[Position, Position]] = None):
+                 unit: Optional[Tuple[float, str]] = None):
         # --- Instance Variables ---
         #  Device connection information
         self.port: str
@@ -39,14 +43,11 @@ class MotorController:
         #  Calibration information
         self.unit: Optional[pyximc.calibration_t] = None
         self.unit_name: Optional[str] = None
-        self.bounds: (Optional[StepPosition, Optional[StepPosition]]) = \
-            (None, None)
         self._free: bool = True  # If I am ._free, I don't need to be .free()d.
 
         # --- Setup ---
         self._capture_device_by_serial(serial)
         if unit: self._set_user_unit(*unit)
-        if bounds: self._set_bounds(*bounds)
 
     # --- Initialization ------------------------------------------------------
     def _capture_device_by_serial(self, serial: int):
@@ -138,21 +139,7 @@ class MotorController:
                       f'{unit_name}, {steps_per_unit} steps per unit')
         self.unit = pyximc.calibration_t()
         self.unit.A = steps_per_unit
-        # self.unit_bounds = (lower_bound, upper_bound)
         self.unit_name = unit_name
-
-    def _set_bounds(self, lower: Position, upper: Position):
-        """Set the upper and lower bounds of the motor.
-
-        Args:
-            lower: The lower bound, in (step, microstep) or user units
-            upper: The upper bound, in (step, microstep) or user units
-        """
-        if lower is not None:
-            lower = self._parse_position(pos=lower)
-        if upper is not None:
-            upper = self._parse_position(pos=upper)
-        self.bounds = (lower, upper)
 
     # --- De-Initialization ---------------------------------------------------
     def free(self):
@@ -206,9 +193,12 @@ class MotorController:
 
         # Allow the user to not give a tuple, but don't suggest this behavior.
         if not isinstance(step, (tuple, list)): step = (step, 0)
+        # Note that step[1], the microsteps, is an unsigned int, and it should
+        #  have the same sign as step[0].
         # This will allow the user to supply floating point steps, but
         #  again, I'm not going to suggest this behavior.
-        return round(step[0] * 256 + step[1]) / 256 / self.unit.A
+        step_float = (step[0] * 256 + math.copysign(step[1], step[0])) / 256
+        return step_float / self.unit.A
 
     def _parse_position(self, *,
                         pos: Optional[Position] = None,
@@ -260,6 +250,7 @@ class MotorController:
                 raise TypeError('Must supply int, float, or a pair thereof.')
         assert False, 'Unreachable code'
 
+    # TODO: Rename to rail (?).
     def _bound_position(self, step: StepPosition, rail=False) -> StepPosition:
         """Check the position against the bounds, if bounds are supplied.
 
@@ -277,6 +268,7 @@ class MotorController:
             PositionOutOfBoundsError: If rail=False and you supply a position
                 that's out of bounds.
         """
+        raise NotImplementedError()
         if self.bounds[0] is not None:
             lower = self.bounds[0][0] + self.bounds[0][1] / 256
             if step[0] + step[1] / 256 < lower:
@@ -292,18 +284,47 @@ class MotorController:
         return step
 
     # --- Information (Getters) -----------------------------------------------
-    def get_position(self) -> float:
-        """Get the motor's current position in user units.
+    def _get_boundaries(self) -> (StepPosition, StepPosition):
+        """Get the boundaries of the motor.
 
-        Returns:
-            position (float): The position in user units.
+        Returns: A tuple of tuples, representing the upper and lower bounds,
+            in (step, microstep) format.
         """
-        step, microstep = self.get_position_step()
-        # TODO: Use the libximc for this, not my own math.
-        # TODO: Raise an error if there's no user units
-        return (step + microstep / 256) / self.unit.A
+        edges_settings_struct = pyximc.edges_settings_t()
 
-    def get_position_step(self) -> (int, int):
+        result = libximc.get_edges_settings(
+            self.device_id,
+            pyximc.byref(edges_settings_struct)
+        )
+        if result != pyximc.Result.Ok:
+            _logger.debug(
+                f'Failed to retrieve boundary settings for device (...), '
+                f'error: {result}')
+
+        border_flags = edges_settings_struct.BorderFlags
+        ender_flags = edges_settings_struct.EnderFlags
+        left_border_steps = edges_settings_struct.LeftBorder
+        left_border_microsteps = edges_settings_struct.uLeftBorder
+        right_border_steps = edges_settings_struct.RightBorder
+        u_right_border_microsteps = edges_settings_struct.uRightBorder
+
+        # BorderFlags has the following values:
+        #  Even: It's not actually using the borders
+        #  3: It's just stopping on the left border
+        #  5: It's just stopping on the right border
+        #  7: It's stopping on both borders.
+        # If they are 8 or greater, subtract that 8 out, I don't know what it
+        #  does. Look at the Border Flags section of the manual for more info.
+        if border_flags != 7:
+            _logger.warning(f'Motor {self.name} is not stopping at both '
+                            f'borders, it has border flag {border_flags}.')
+
+        return(
+            (left_border_steps, left_border_microsteps),
+            (right_border_steps, u_right_border_microsteps)
+        )
+
+    def _get_position(self) -> StepPosition:
         """Get the motor's current position in steps.
 
         Returns: a tuple of:
@@ -322,6 +343,32 @@ class MotorController:
         microstep = position_struct.uPosition  # CType uint
         # encoder_pos = position_struct.EncPosition  # CType long
         return step, microstep
+
+    # TODO: Let this also give it in steps?
+    def get_boundaries(self) -> (UnitPosition, UnitPosition):
+        """Get the motor's boundaries, in user units."""
+        lower_boundary_steps, upper_boundary_steps = self._get_boundaries()
+        return (
+            self._step_to_unit(lower_boundary_steps),
+            self._step_to_unit(upper_boundary_steps),
+        )
+
+    # TODO: Let this also give it in steps?
+    def get_position(self) -> UnitPosition:
+        """Get the motor's current position in user units.
+
+        Returns:
+            position (float): The position in user units.
+        """
+        return self._step_to_unit(self._get_position())
+
+    # @property
+    # def bounds(self) -> (UnitPosition, UnitPosition):
+    #     return self.get_position()
+    #
+    # @property
+    # def position(self) -> UnitPosition:
+    #     return self.get_position()
 
     # --- Settings Customization (Setters) ------------------------------------
     def set_zero(self):
@@ -389,6 +436,10 @@ class MotorController:
 
         Args:
             by (float): The number of user units to move by.
+            unit (float): The amount to move by, in user units.
+            step (float): The amount to move by, in (step, microstep) format.
+            rail: If True, then instead of throwing an error if you go out of
+                bounds, it will move as far as allowed.
 
         Raises:
             LibXIMCCommandFailedError: If the movement fails
@@ -424,6 +475,7 @@ class MotorController:
         if result != pyximc.Result.Ok:
             raise LibXIMCCommandFailedError(result)
 
+    @util.depreciate
     def move_to_step(self, step: int, microstep: int = 0):
         """
         Move to the specified location, in steps (absolute positioning).
@@ -444,6 +496,7 @@ class MotorController:
         if result != pyximc.Result.Ok:
             raise LibXIMCCommandFailedError(result)
 
+    @util.depreciate
     def move_by_step(self, step: int, microstep: int = 0):
         """
         Move by the specified number of steps (relative positioning).

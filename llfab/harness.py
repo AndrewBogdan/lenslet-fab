@@ -121,7 +121,7 @@ class _Toolpath(Iterator):
                 self._lase_num += 1
         self._pointer += 1
 
-    def plot_xy(self, ax=None, /,
+    def plot_xy(self, ax=None, *,
                 lase_colors=(
                     # '#9BC53D', '#508484', '#7E52A0', '#4A4238', '#E63946',
                     'green', 'yellowgreen', 'yellow', 'orange', 'orangered',

@@ -1,0 +1,29 @@
+serial:
+  x: 17582
+  y: 17570
+  z: 17631
+  n: 17615
+  p: 17638
+  v: 17607
+
+unit:
+  x: [0.1, 'um']
+  y: [0.1, 'um']
+  z: [0.39940625, 'um']
+  n: [99.88, 'deg']
+  p: [-100.4, 'deg']
+  v: [-99.87, 'deg']
+
+geometry:
+  # Compare the height of the origin at p=0 and 90 deg.
+  p_radius_um: 56.5e3
+
+  # Define z=0 when the v-bed is 105 um off of the xy bed
+  z_zero_um: 105e3
+
+  # The height which it will try to keep the origin at.
+  # Note: The focal point of the laser is at around 150 um off the xy bed.
+  z_default_um: 150e3
+
+  # We don't need the n-axis to move, so fix it in this position.
+  n_default_deg: -45

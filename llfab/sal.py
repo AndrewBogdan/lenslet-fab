@@ -11,6 +11,7 @@ import math
 from llfab import ezcad
 from llfab import gas
 from llfab import motor
+from llfab import config
 
 
 _logger = logging.getLogger(__name__)
@@ -56,27 +57,32 @@ class SixAxisLaserController:
         firmware can't handle.
     """
 
-    X_SERIAL = 17582
-    Y_SERIAL = 17570
-    Z_SERIAL = 17631
-    N_SERIAL = 17615
-    P_SERIAL = 17638
-    V_SERIAL = 17607
+    X_SERIAL = config['serial']['x']
+    Y_SERIAL = config['serial']['y']
+    Z_SERIAL = config['serial']['z']
+    N_SERIAL = config['serial']['n']
+    P_SERIAL = config['serial']['p']
+    V_SERIAL = config['serial']['v']
 
-    X_UNIT = (0.1, 'um')
-    Y_UNIT = (0.1, 'um')
-    Z_UNIT = (0.39940625, 'um')
-    N_UNIT = (99.88, 'deg')
-    P_UNIT = (-100.4, 'deg')
-    V_UNIT = (-99.87, 'deg')
+    X_UNIT = config['unit']['x']
+    Y_UNIT = config['unit']['y']
+    Z_UNIT = config['unit']['z']
+    N_UNIT = config['unit']['n']
+    P_UNIT = config['unit']['p']
+    V_UNIT = config['unit']['v']
 
-    Z_BOUNDS = (0, 45)  # TODO
+    # Compare the height of the origin at p=0 and 90 deg.
+    P_RADIUS_UM = config['geometry']['p_radius_um']
 
-    P_RADIUS_UM = 56.5e3  # Compare the height of the origin at p=0 and 90 deg.
-    Z_ZERO_UM = 105e3  # Define z=0 when the v-bed is 105 um off of the xy bed
+    # Define z=0 when the v-bed is 105 um off of the xy bed
+    Z_ZERO_UM = config['geometry']['z_zero_um']
+
+    # The height which it will try to keep the origin at.
     # Note: The focal point of the laser is at around 150 um off the xy bed.
-    Z_DEFAULT_UM = 150e3  # The height which it will try to keep the origin at.
-    N_DEFAULT_DEG = -45  # We don't need the n-axis to move, so fix it.
+    Z_DEFAULT_UM = config['geometry']['z_default_um']
+
+    # We don't need the n-axis to move, so fix it in this position.
+    N_DEFAULT_DEG = config['geometry']['n_default_deg']
 
     # assert Z_DEFAULT_UM > Z_ZERO_UM + P_RADIUS_UM, 'If the default z ' \
     #     'position for the lenslet is less than the height of the P_Axis\'s ' \
@@ -158,8 +164,6 @@ class SixAxisLaserController:
         #  order that they're normally in.
         self._six_motors = tuple(getattr(self, m) if hasattr(self, m) else None
                                  for m in ('x', 'y', 'z', 'n', 'p', 'v'))
-
-        # TODO: Set up bounds
 
     def _check_captured(self, *motors: Motors):
         """Returns True if all of the specified motors were required at
@@ -276,6 +280,10 @@ class SixAxisLaserController:
 
     def set_zero(self):
         """Set the current position as zero."""
+        motor_names = [m.name for m in self.motors]
+        if input(f'This will reset the motors {motor_names} to zero, are you '
+                 f'sure you want to do this? (Y/N): ').lower() != 'y':
+            return
         _logger.info('Defining current 6-axis position as zero.')
         for mot in self.motors:
             mot.set_zero()
