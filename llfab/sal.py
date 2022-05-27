@@ -72,17 +72,19 @@ class SixAxisLaserController:
     V_UNIT = config['unit']['v']
 
     # Compare the height of the origin at p=0 and 90 deg.
-    P_RADIUS_UM = config['geometry']['p_radius_um']
+    P_RADIUS_UM = float(config['geometry']['p_radius_um'])
 
     # Define z=0 when the v-bed is 105 um off of the xy bed
-    Z_ZERO_UM = config['geometry']['z_zero_um']
+    # TODO: This is not being used
+    # Z_ZERO_UM = float(config['geometry']['z_zero_um'])
 
     # The height which it will try to keep the origin at.
     # Note: The focal point of the laser is at around 150 um off the xy bed.
-    Z_DEFAULT_UM = config['geometry']['z_default_um']
+    # TODO: This is not being used
+    # Z_DEFAULT_UM = float(config['geometry']['z_default_um'])
 
     # We don't need the n-axis to move, so fix it in this position.
-    N_DEFAULT_DEG = config['geometry']['n_default_deg']
+    N_DEFAULT_DEG = float(config['geometry']['n_default_deg'])
 
     # assert Z_DEFAULT_UM > Z_ZERO_UM + P_RADIUS_UM, 'If the default z ' \
     #     'position for the lenslet is less than the height of the P_Axis\'s ' \
@@ -191,8 +193,34 @@ class SixAxisLaserController:
         return (
             x_um - cls.P_RADIUS_UM * math.sin(p_rad) * math.sin(n_rad),
             y_um + cls.P_RADIUS_UM * math.sin(p_rad) * math.cos(n_rad),
-            z_um + cls.Z_ZERO_UM + cls.P_RADIUS_UM * (1 - math.cos(p_rad)),
+            z_um + cls.P_RADIUS_UM * (1 - math.cos(p_rad)),
         )
+
+    @classmethod
+    def calc_spherical_pos(
+            cls,
+            azimuth: float,
+            incline: float,
+            height: float,
+    ):
+        """Gets the 6-coordinates corresponding to a given spherical
+        coordinate system."""
+        # The angles are independent, and we calculate the xyz.
+        n_deg = cls.N_DEFAULT_DEG
+        p_deg = incline
+        v_deg = azimuth
+
+        # Get radians for math.sin & math.cos functions
+        n_rad = math.radians(n_deg)
+        p_rad = math.radians(incline)
+        # v_rad = math.radians(azimuth)
+
+        # Calculate where each stepper should go to
+        x_um = (cls.P_RADIUS_UM * math.sin(p_rad) * math.sin(n_rad))
+        y_um = (-cls.P_RADIUS_UM * math.sin(p_rad) * math.cos(n_rad))
+        z_um = (height - cls.P_RADIUS_UM * (1 - math.cos(p_rad)))
+
+        return x_um, y_um, z_um, n_deg, p_deg, v_deg
 
     def at(self,
            x_um: Optional[float] = None,
@@ -292,27 +320,15 @@ class SixAxisLaserController:
             self,
             azimuth: float,
             incline: float,
-            height: float = Z_DEFAULT_UM,
+            height: float,
     ):
         """Moves the 6-axis to the given spherical coordinates, in degrees.
-        Requires all six motors to be captured."""
-        self._check_captured(Motors.ALL)
+        Requires all six motors to be captured except N."""
+        self._check_captured(Motors.X, Motors.Y, Motors.Z, Motors.P, Motors.V)
 
-        # The angles are independent, and we calculate the xyz.
-        n_deg = self.N_DEFAULT_DEG
-        p_deg = incline
-        v_deg = azimuth
-
-        # Get radians for math.sin & math.cos functions
-        n_rad = math.radians(n_deg)
-        p_rad = math.radians(incline)
-        # v_rad = math.radians(azimuth)
-
-        # Calculate where each stepper should go to
-        x_um = (self.P_RADIUS_UM * math.sin(p_rad) * math.sin(n_rad))
-        y_um = (-self.P_RADIUS_UM * math.sin(p_rad) * math.cos(n_rad))
-        z_um = (height - self.Z_ZERO_UM - self.P_RADIUS_UM *
-                (1 - math.cos(p_rad)))
+        x_um, y_um, z_um, n_deg, p_deg, v_deg = self.calc_spherical_pos(
+            azimuth=azimuth, incline=incline, height=height,
+        )
 
         o_pos = self.calc_origin(x_um, y_um, z_um, n_deg, p_deg, v_deg)
         _logger.debug(f'Moving origin to ({int(o_pos[0])}um, '
@@ -322,7 +338,7 @@ class SixAxisLaserController:
         self.x.move_to(unit=x_um)
         self.y.move_to(unit=y_um)
         self.z.move_to(unit=z_um)
-        self.n.move_to(unit=n_deg)
+        # self.n.move_to(unit=n_deg)
         self.p.move_to(unit=p_deg)
         self.v.move_to(unit=v_deg)
 

@@ -4,23 +4,25 @@ Tools for more easily coordinating the laser and controller. Build around
 generators of instructions; see llfab/toolpaths.py for examples.
 """
 
-from typing import Optional, Generator, TypeAlias, ParamSpec
+from typing import Generator, TypeAlias
 from collections.abc import Iterator
 import enum
 import functools
 import math
 
-from numpy.typing import NDArray
 import matplotlib.pyplot as plt
+from matplotlib import cm
 from matplotlib import ticker
 import numpy as np
+from numpy.typing import NDArray
 
-from llfab import motor
+from llfab import sal
 
 
 class Inst(enum.Enum):
     MOVE = 'MOVE'
     GO = 'GO'
+    GO_SPH = 'GO_SPH'
     LASE = 'LASE'
     FENCE = 'FENCE'
     RETURN = 'RETURN'
@@ -90,6 +92,12 @@ class _Toolpath(Iterator):
                     pos_to.resize((6, ))
                     pos = pos_to.copy()
 
+                case (Inst.GO_SPH, *pos_sph_to):
+                    pos_sph_to = np.array(pos_sph_to)
+                    pos_sph_to.resize((3, ))
+                    pos_to = np.array(sal.SALC.calc_spherical_pos(*pos_sph_to))
+                    pos = pos_to.copy()
+
                 case Inst.RETURN:
                     pos = np.array((0.0, ) * 6)
                     record_position()
@@ -115,7 +123,7 @@ class _Toolpath(Iterator):
     def confirm(self):
         """Confirm that the last instruction executed fully."""
         match self._next:
-            case (Inst.MOVE | Inst.GO, *_) | Inst.RETURN:
+            case (Inst.MOVE | Inst.GO | Inst.GO_SPH, *_) | Inst.RETURN:
                 self._pos_num += 1
             case Inst.LASE:
                 self._lase_num += 1
@@ -220,6 +228,48 @@ class _Toolpath(Iterator):
 
         return ax
 
+    def plot_sph(self, ax=None, *,
+                 radius=1):
+        """TODO"""
+        # --- Make a plot of a hemisphere with radius ---
+        fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, figsize=(10, 7))
+
+        radius_shrunk = radius * 0.97  # Shrink the radius so we can see
+        azimuth, incline = np.mgrid[0:2 * np.pi:20j, 0:np.pi / 2:20j]
+        mesh_x = np.cos(azimuth) * np.sin(incline) * radius_shrunk
+        mesh_y = np.sin(azimuth) * np.sin(incline) * radius_shrunk
+        mesh_z = np.cos(incline) * radius_shrunk
+
+        ax.plot_surface(
+            mesh_x, mesh_y, mesh_z,
+            cmap=cm.summer,
+            antialiased=False,
+        )
+
+        # --- Plot the lase locations on the surface of the hemisphere ---
+        lase_x = []
+        lase_y = []
+        lase_z = []
+        for pos in self._positions:
+            x_um, y_um, z_um, n_deg, p_deg, v_deg = pos
+
+            incline = math.radians(p_deg)
+            azimuth = math.radians(v_deg)
+
+            orig_x, orig_y, orig_z = sal.SALC.calc_origin(*pos)
+
+            # We actually lase above the origin, by radius
+            lase_x.append(
+                orig_x + math.cos(azimuth) * math.sin(incline) * radius)
+            lase_y.append(
+                orig_y + math.sin(azimuth) * math.sin(incline) * radius)
+            lase_z.append(orig_z + math.cos(incline) * radius)
+
+        ax.scatter(
+            lase_x, lase_y, lase_z,
+            color='red',
+        )
+
 
 def toolpath(inst_gen_function: Generator):
     """A decorator to apply to a generator of instructions. The decorated
@@ -230,6 +280,9 @@ def toolpath(inst_gen_function: Generator):
     The generator should yield instructions of the formats:
     - (Inst.MOVE, X (float, required), Y (optional), Z, N, P, V)
     - (Inst.GO, X (float, required), Y (optional), Z, N, P, V)
+    - (Inst.GO_SPH, azimuth, incline, height)
+        Both azimuth and incline are in degrees and are required, height is
+        optional.
     - Inst.LASE
     - Inst.FENCE
     - Inst.RETURN

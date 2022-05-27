@@ -18,6 +18,8 @@ I'll write something here once I have a reason to.
     - Send an email to Shawn at finish
     - Allow chaining toolpaths together (maybe in the harness?)
       - But you'd have to change the lasing, and that's not cash
+    - Track the original instructions, and expose the new ones, the lases, and 
+        the positions in a readable way.
 2. Bounds
    - Real xy=0 (configurable)
    - This also requires bound-defining
@@ -48,3 +50,4 @@ I'll write something here once I have a reason to.
    - Change get_position_step to be an option in get_position, and have it
        give a MotorPosition type or something.
    - Standardize move_to, move_by, etc.
+8. Tests
