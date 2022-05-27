@@ -5,8 +5,14 @@
 from typing import Iterable, TypeAlias, Optional
 
 import enum
+import datetime
 import logging
 import math
+import time
+
+from IPython import display
+import matplotlib.pyplot as plt
+import numpy as np
 
 from llfab import ezcad
 from llfab import gas
@@ -25,6 +31,15 @@ class Motors(enum.Enum):
     P = 'p'
     V = 'v'
     ALL = 'all'
+
+
+class Inst(enum.Enum):
+    MOVE = 'MOVE'
+    GO = 'GO'
+    GO_SPH = 'GO_SPH'
+    LASE = 'LASE'
+    FENCE = 'FENCE'
+    RETURN = 'RETURN'
 
 
 class SixAxisLaserController:
@@ -167,6 +182,17 @@ class SixAxisLaserController:
         self._six_motors = tuple(getattr(self, m) if hasattr(self, m) else None
                                  for m in ('x', 'y', 'z', 'n', 'p', 'v'))
 
+    # --- Setup & Teardown ----------------------------------------------------
+    def free(self):
+        """Free all captured motors."""
+        if self._free:
+            _logger.debug('SALC.motors does not exist, nothing to free.')
+            return
+        for mot in self.motors:
+            mot.free()
+        self._free = True
+
+    # --- Utility -------------------------------------------------------------
     def _check_captured(self, *motors: Motors):
         """Returns True if all of the specified motors were required at
         at instantiation and raise a MissingMotorError otherwise"""
@@ -183,6 +209,7 @@ class SixAxisLaserController:
             captured=self._required_motors,
         )
 
+    # --- Geometry Calculations -----------------------------------------------
     @classmethod
     def calc_origin(cls, x_um, y_um, z_um, n_deg, p_deg, v_deg):
         """Calculates the expected location of the origin given positions."""
@@ -222,6 +249,7 @@ class SixAxisLaserController:
 
         return x_um, y_um, z_um, n_deg, p_deg, v_deg
 
+    # --- Information (Getters) -----------------------------------------------
     def at(self,
            x_um: Optional[float] = None,
            y_um: Optional[float] = None,
@@ -275,15 +303,6 @@ class SixAxisLaserController:
                 return False
         return True
 
-    def free(self):
-        """Free all captured motors."""
-        if self._free:
-            _logger.debug('SALC.motors does not exist, nothing to free.')
-            return
-        for mot in self.motors:
-            mot.free()
-        self._free = True
-
     def get_origin(self):
         """Return the (expected) current location of the origin in XYZ."""
         return self.calc_origin(*self.get_position())
@@ -306,6 +325,7 @@ class SixAxisLaserController:
         return tuple(int(m.get_position_step()[1]) if m is not None else 0
                      for m in self._six_motors)
 
+    # --- Configuration (Setters) ---------------------------------------------
     def set_zero(self):
         """Set the current position as zero."""
         motor_names = [m.name for m in self.motors]
@@ -316,7 +336,33 @@ class SixAxisLaserController:
         for mot in self.motors:
             mot.set_zero()
 
-    def to_spherical_pos(
+    # --- Movement Functions --------------------------------------------------
+    def to_pos_soft(self, x_um: float, y_um: float, z_um: float,
+                    n_deg, p_deg, v_deg, rail: bool = False):
+        """Moves the 6-axis to the specified coordinate, ignoring motors that
+        are not captured.
+
+        Args:
+            x_um: The x-position to go to, in micrometers.
+            y_um: The y-position to go to, in micrometers.
+            z_um: The z-position to go to, in micrometers.
+            n_deg: The n-position to go to, in degrees.
+            p_deg: The n-position to go to, in degrees.
+            v_deg: The n-position to go to, in degrees.
+            rail: If True, then instead of throwing an error if you go out of
+                bounds, it will move as far as allowed.
+
+        Raises:
+            LibXIMCCommandFailedError: If the movement fails.
+            PositionOutOfBoundsError: If rail=False and you supply a position
+                that's out of bounds.
+        """
+        coords = [x_um, y_um, z_um, n_deg, p_deg, v_deg]
+        for mot, coord in zip(self._six_motors, coords):
+            if mot is not None:
+                mot.move_to(unit=coord, rail=rail)
+
+    def to_pos_sph(
             self,
             azimuth: float,
             incline: float,
@@ -370,6 +416,94 @@ class SixAxisLaserController:
         _logger.debug(f'Moving all motors to zero.')
         for mot in self.motors:
             mot.move_to(0)
+
+    # --- Toolpath Runner -----------------------------------------------------
+    def run_toolpath(
+            self,
+            toolpath,
+            origin,
+
+            lase: bool,
+            lase_time: float,
+            move_time: float = 3.0,
+
+            plot_type: Optional[str] = None,
+            plot_args: Optional[dict] = None,
+    ):
+        """TODO"""
+        # TODO: Should this be configurable?
+        move_tick = 30
+        origin = np.array(origin)
+        plot_args = plot_args or {}
+
+        # --- Check the bounds ---
+        positions = list(zip(*toolpath.positions))
+        for index, mot in enumerate(self._six_motors):
+            if mot is None:
+                continue
+            lower, upper = mot.get_boundaries()
+            for relative_pos in positions[index]:
+                if not lower < relative_pos + origin[index] < upper:
+                    raise motor.PositionOutOfBoundsError(
+                        f'Motor {mot.name}, '
+                        f'Position {relative_pos + origin[index]:.2f}'
+                    )
+
+        for instruction in toolpath:
+            display.clear_output(wait=True)
+
+            # --- Calculate & Print Duration ---
+            lases_done, lases_total = toolpath.lase_status
+            moves_done, moves_total = toolpath.move_status
+            lases_left = lases_total - lases_done
+            moves_left = moves_total - moves_done
+            duration_s = lase_time * lases_left + 0.5 * moves_left
+            finish_time = datetime.datetime.now() + \
+                datetime.timedelta(seconds=duration_s)
+            print(f'Projected finish time: {finish_time}.')
+
+            # --- Plot the Progress ---
+            toolpath.plot(kind=plot_type, **plot_args)
+            plt.show()
+            match instruction:
+                case (Inst.GO, *to_pos_relative):
+                    to_pos_relative = np.array(to_pos_relative)
+                    to_pos_relative.resize((6, ))
+                    to_pos = origin + to_pos_relative
+                    print(f'Moving to ({tuple(to_pos)}).')
+
+                    # Move the arm
+                    self.to_pos_soft(*to_pos)
+
+                    # Wait for it to move
+                    # We're only checking the motors which are moving away
+                    #  from the initial position.
+                    check = [coord for coord in to_pos if coord]
+                    for _ in range(int(move_time * move_tick)):
+                        if self.at(*check):
+                            time.sleep(1)
+                            break
+                        time.sleep(1 / move_tick)
+
+                    # If it's moved, confirm. Otherwise, error.
+                    if self.at(*check):
+                        toolpath.confirm()
+                    else:
+                        raise Exception(
+                            f'At position {self.get_position()}, not {to_pos}.')
+
+                case Inst.LASE:
+                    print(f'Lasing at {self.get_position()}.')
+                    if lase:
+                        with self.gas():
+                            self.lase()
+                            time.sleep(lase_time)
+                    else:
+                        time.sleep(lase_time)
+                    toolpath.confirm()
+        # --- Finished Routine ---
+        print('Done!')
+        # TODO: Send an email to Shawn
 
     # --- Static Controller Functions -----------------------------------------
     # These functions forward to similar functions in other files, I have them

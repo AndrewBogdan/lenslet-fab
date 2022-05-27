@@ -4,7 +4,7 @@ Tools for more easily coordinating the laser and controller. Build around
 generators of instructions; see llfab/toolpaths.py for examples.
 """
 
-from typing import Generator, TypeAlias
+from typing import Generator, TypeAlias, Optional
 from collections.abc import Iterator
 import enum
 import functools
@@ -17,15 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from llfab import sal
-
-
-class Inst(enum.Enum):
-    MOVE = 'MOVE'
-    GO = 'GO'
-    GO_SPH = 'GO_SPH'
-    LASE = 'LASE'
-    FENCE = 'FENCE'
-    RETURN = 'RETURN'
+from llfab.sal import Inst
 
 
 Instruction: TypeAlias = tuple[Inst, ...]
@@ -46,9 +38,9 @@ class _Toolpath(Iterator):
             inst_iterator: The iterator to wrap and modify.
         """
         insts, positions, lases = self._get_instructions(inst_iterator)
-        self._insts = insts
-        self._positions = positions
-        self._lases = lases
+        self.insts = insts
+        self.positions = positions
+        self.lases = lases
 
         self._pointer = 0
         self._next = None
@@ -59,7 +51,7 @@ class _Toolpath(Iterator):
     def __next__(self):
         """TODO"""
         try:
-            self._next = self._insts[self._pointer]
+            self._next = self.insts[self._pointer]
             return self._next
         except IndexError:
             raise StopIteration()
@@ -120,6 +112,7 @@ class _Toolpath(Iterator):
 
         return insts, positions, lases
 
+    # --- Runtime Functionality -----------------------------------------------
     def confirm(self):
         """Confirm that the last instruction executed fully."""
         match self._next:
@@ -128,6 +121,37 @@ class _Toolpath(Iterator):
             case Inst.LASE:
                 self._lase_num += 1
         self._pointer += 1
+
+    @property
+    def lase_status(self):
+        """Return a tuple of the number of lases completed and the total number
+         of lases being done."""
+        return self._lase_num, len(self.lases)
+
+    @property
+    def move_status(self):
+        """Return a tuple of the number of moves completed and the total number
+        of moves being done."""
+        return self._pos_num, len(self.positions) - 1
+
+    # --- Plotting ------------------------------------------------------------
+    def plot(self, kind: Optional[str] = None, *args, **kwargs):
+        """Plot the toolpath.
+
+        Args:
+            kind: The type of plot, chosen from 'xy', 'sph'. Defaults to 'xy'.
+            *args: Arguments, passed to the plotting function.
+            **kwargs: Keyword arguments, passed to the plotting function
+
+        Returns:
+            The axis plotted on.
+        """
+        kind = kind or 'xy'
+        match kind:
+            case 'xy':
+                return self.plot_xy(*args, **kwargs)
+            case 'sph':
+                return self.plot_sph(*args, **kwargs)
 
     def plot_xy(self, ax=None, *,
                 lase_colors=(
@@ -167,11 +191,11 @@ class _Toolpath(Iterator):
 
         # These represent the current state, and if we're finished, there's
         #  special behavior.
-        pos_num = self._pos_num if self._pos_num != len(self._positions) else -1
-        lase_num = self._lase_num if self._lase_num != len(self._lases) else -1
+        pos_num = self._pos_num if self._pos_num != len(self.positions) else -1
+        lase_num = self._lase_num if self._lase_num != len(self.lases) else -1
 
-        pos_x, pos_y, _, _, _, _ = zip(*self._positions[pos_num:])
-        lase_x, lase_y, _, _, _, _ = zip(*self._lases)
+        pos_x, pos_y, _, _, _, _ = zip(*self.positions[pos_num:])
+        lase_x, lase_y, _, _, _, _ = zip(*self.lases)
 
         # Change from um to m
         pos_x = np.array(pos_x) / 1e6
@@ -182,7 +206,7 @@ class _Toolpath(Iterator):
         # Color-code the lases
         lc_first, lc_done, lc_current, lc_todo, lc_last = lase_colors
         lase_c = [lc_done] * self._lase_num + \
-                 [lc_todo] * (len(self._lases) - self._lase_num)
+                 [lc_todo] * (len(self.lases) - self._lase_num)
         lase_c[lase_num] = lc_current
         lase_c[0] = lc_first
         lase_c[-1] = lc_last
@@ -205,14 +229,14 @@ class _Toolpath(Iterator):
 
         # Plot the start and end points
         ax.scatter(
-            [self._positions[-1][1]], [self._positions[-1][0]],
+            [self.positions[-1][1]], [self.positions[-1][0]],
             s=args_end.pop('s', 50),
             c=args_end.pop('c', 'red'),
             marker=args_end.pop('marker', 's'),
             **args_end
         )
         ax.scatter(
-            [self._positions[0][1]], [self._positions[0][0]],
+            [self.positions[0][1]], [self.positions[0][0]],
             s=args_start.pop('s', 100),
             c=args_start.pop('c', 'green'),
             marker=args_start.pop('marker', '>'),
@@ -250,7 +274,7 @@ class _Toolpath(Iterator):
         lase_x = []
         lase_y = []
         lase_z = []
-        for pos in self._positions:
+        for pos in self.positions:
             x_um, y_um, z_um, n_deg, p_deg, v_deg = pos
 
             incline = math.radians(p_deg)
@@ -269,6 +293,7 @@ class _Toolpath(Iterator):
             lase_x, lase_y, lase_z,
             color='red',
         )
+        return ax
 
 
 def toolpath(inst_gen_function: Generator):

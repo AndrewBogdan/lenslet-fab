@@ -12,33 +12,26 @@ I'll write something here once I have a reason to.
        the minimum distance between them?)
    - Ask Shawn if the rotated toolpath is correct
 1. Harness
-    - Make it not in the iPython notebook
     - Make sure we don't lase the same spot twice (a check routine)
-    - Give a time estimate of how long it'll take
     - Send an email to Shawn at finish
     - Allow chaining toolpaths together (maybe in the harness?)
       - But you'd have to change the lasing, and that's not cash
     - Track the original instructions, and expose the new ones, the lases, and 
         the positions in a readable way.
 2. Bounds
-   - Real xy=0 (configurable)
-   - This also requires bound-defining
-     - Let them provide a message with each bound, which would be used in the
-         error if that bound was hit. For example, "you hit the microscope!".
+   - Let them provide a message with each bound, which would be used in the
+       error if that bound was hit. For example, "you hit the microscope!".
    - These would also be good to put in a config, you'd need to do it all
         at once, and then it would move its full range and ask you if it's
         still in the same spot.
    - Idea: use the rail to set limits?
-   - Know beforehand if a toolpath is out of bounds
    - Allow plotting absolute coordinates too (?)
    - Remove old bound code
-   - Implement optional railing behavior.
+   - Implement railing behavior.
 3. Spherical Path
    - Arguments: pitch, diameter/radius, and angle from zenith (inside of cone)
    - Tessolate the sphere with triangles (icosahedron-based?)
    - Pitch is spherical/geodesic distance
-   - 3D graph it: Shawn likes the graphing!
-   - Need a GO_SPH instruction or something
 4. Gas
 5. Make a break=True/False option to have movement commands wait until they're
    completed to exit.
@@ -51,3 +44,7 @@ I'll write something here once I have a reason to.
        give a MotorPosition type or something.
    - Standardize move_to, move_by, etc.
 8. Tests
+
+Note: There's a pretty circular dependence between sal.py and harness.py, I 
+    should change it so that there's a geometry information file that harness
+    and sal both access, and move SALC's classmethods there
