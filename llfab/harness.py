@@ -205,6 +205,7 @@ class _Toolpath(Iterator):
 
         # Color-code the lases
         lc_first, lc_done, lc_current, lc_todo, lc_last = lase_colors
+        # TODO: Should we switch to lase_num here?
         lase_c = [lc_done] * self._lase_num + \
                  [lc_todo] * (len(self.lases) - self._lase_num)
         lase_c[lase_num] = lc_current
@@ -253,10 +254,28 @@ class _Toolpath(Iterator):
         return ax
 
     def plot_sph(self, ax=None, *,
-                 radius=1):
+                 radius=1,
+                 lase_num=0,  # TODO: Temporary
+
+                 # Plotting parameters
+                 lase_colors=(
+                     # '#9BC53D', '#508484', '#7E52A0', '#4A4238', '#E63946',
+                     'green', 'yellowgreen', 'yellow', 'orange', 'orangered',
+                 ),
+                 args_lase=None,
+                 args_surface=None,
+                 ):
         """TODO"""
+        # --- Manage optional arguments ---
+        args_lase = args_lase or {}
+        args_surface = args_surface or {}
+
         # --- Make a plot of a hemisphere with radius ---
-        fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, figsize=(10, 7))
+        if ax is None:
+            _, ax = plt.subplots(
+                subplot_kw={"projection": "3d"},
+                figsize=(10, 7)
+            )
 
         radius_shrunk = radius * 0.97  # Shrink the radius so we can see
         azimuth, incline = np.mgrid[0:2 * np.pi:20j, 0:np.pi / 2:20j]
@@ -264,23 +283,17 @@ class _Toolpath(Iterator):
         mesh_y = np.sin(azimuth) * np.sin(incline) * radius_shrunk
         mesh_z = np.cos(incline) * radius_shrunk
 
-        ax.plot_surface(
-            mesh_x, mesh_y, mesh_z,
-            cmap=cm.summer,
-            antialiased=False,
-        )
-
-        # --- Plot the lase locations on the surface of the hemisphere ---
+        # --- Get the lase locations on the surface of the hemisphere ---
         lase_x = []
         lase_y = []
         lase_z = []
-        for pos in self.positions:
-            x_um, y_um, z_um, n_deg, p_deg, v_deg = pos
+        for lase in self.lases:
+            x_um, y_um, z_um, n_deg, p_deg, v_deg = lase
 
             incline = math.radians(p_deg)
             azimuth = math.radians(v_deg)
 
-            orig_x, orig_y, orig_z = sal.SALC.calc_origin(*pos)
+            orig_x, orig_y, orig_z = sal.SALC.calc_origin(*lase)
 
             # We actually lase above the origin, by radius
             lase_x.append(
@@ -289,10 +302,45 @@ class _Toolpath(Iterator):
                 orig_y + math.sin(azimuth) * math.sin(incline) * radius)
             lase_z.append(orig_z + math.cos(incline) * radius)
 
+        # --- Change from um to m ---
+        mesh_x = np.array(mesh_x) / 1e6
+        mesh_y = np.array(mesh_y) / 1e6
+        mesh_z = np.array(mesh_z) / 1e6
+        lase_x = np.array(lase_x) / 1e6
+        lase_y = np.array(lase_y) / 1e6
+        lase_z = np.array(lase_z) / 1e6
+
+        # --- Color-code the lases ---
+        lase_num = lase_num if lase_num != len(self.lases) else -1
+        lc_first, lc_done, lc_current, lc_todo, lc_last = lase_colors
+        lase_c = [lc_done] * lase_num + \
+                 [lc_todo] * (len(self.lases) - lase_num)
+        lase_c[lase_num] = lc_current
+        lase_c[0] = lc_first
+        lase_c[-1] = lc_last
+
+        # --- Plot everything ---
+        ax.plot_surface(
+            mesh_x, mesh_y, mesh_z,
+            cmap=args_surface.pop('cmap', cm.summer),
+            antialiased=args_surface.pop('antialiased', False),
+            **args_surface
+        )
         ax.scatter(
             lase_x, lase_y, lase_z,
-            color='red',
+            c=args_lase.get('c', lase_c),
+            **args_lase,
         )
+
+        # --- Set units ---
+        ax.xaxis.set_major_formatter(ticker.EngFormatter(unit='m'))
+        ax.yaxis.set_major_formatter(ticker.EngFormatter(unit='m'))
+        ax.zaxis.set_major_formatter(ticker.EngFormatter(unit='m'))
+
+        # ax.set_xlabel('X')
+        # ax.set_ylabel('Y')
+        # ax.set_zlabel('Z')
+
         return ax
 
 
