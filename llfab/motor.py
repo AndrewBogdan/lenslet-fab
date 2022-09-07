@@ -1,10 +1,9 @@
 """
 Module for controlling the motors through pyximc.
 """
-import warnings
 from typing import TypeAlias, Optional, Tuple
 
-import enum
+import asyncio
 import logging
 import math
 
@@ -33,7 +32,8 @@ class MotorController:
 
     def __init__(self,
                  serial: int,
-                 unit: Optional[Tuple[float, str]] = None):
+                 unit: Optional[Tuple[float, str]] = None,
+                 refresh_interval_ms: float = 30.0, ):
         # --- Instance Variables ---
         #  Device connection information
         self.port: str
@@ -43,6 +43,7 @@ class MotorController:
         #  Calibration information
         self.unit: Optional[pyximc.calibration_t] = None
         self.unit_name: Optional[str] = None
+        self.refresh_interval_ms = refresh_interval_ms
         self._free: bool = True  # If I am ._free, I don't need to be .free()d.
 
         # --- Setup ---
@@ -172,9 +173,13 @@ class MotorController:
         """
         if not self.unit:
             raise NoUserUnitError()
-        return \
-            int((self.unit.A * amount) // 1), \
-            int(256 * ((self.unit.A * amount) % 1))
+
+        step_x256 = round(self.unit.A * amount * 256)
+        step, microstep = divmod(abs(step_x256), 256)
+        return (
+            round(math.copysign(step, step_x256)),
+            round(math.copysign(microstep, step_x256))
+        )
 
     def _step_to_unit(self, step: StepPosition) -> UnitPosition:
         """Convert a position or offset from steps to user units.
@@ -197,8 +202,37 @@ class MotorController:
         #  have the same sign as step[0].
         # This will allow the user to supply floating point steps, but
         #  again, I'm not going to suggest this behavior.
-        step_float = (step[0] * 256 + math.copysign(step[1], step[0])) / 256
+        step_float = (step[0] * 256 + step[1]) / 256.0
         return step_float / self.unit.A
+
+    @staticmethod
+    def _step_sanitize(step: StepPosition) -> StepPosition:
+        """Converts a step into a sanitized version of the step, matching what
+        LibXIMC outputs. In particular, the sign of step and microstep should
+        match.
+
+        Args:
+            step: A tuple (int, int) of (steps, microsteps).
+
+        Returns:
+            (step, microstep) with matching sign and correct typing.
+        """
+
+        if isinstance(step, (tuple, list)):
+            step, microstep = step
+        elif isinstance(step, int):
+            microstep = 0
+        elif isinstance(step, float):
+            microstep = 0
+        else:
+            raise TypeError('Must supply int, float, or a pair thereof.')
+
+        step_x256 = round(step * 256 + microstep)
+        step, microstep = divmod(abs(step_x256), 256)
+        return (
+            round(math.copysign(step, step_x256)),
+            round(math.copysign(microstep, step_x256)),
+        )
 
     def _parse_position(self, *,
                         pos: Optional[Position] = None,
@@ -240,14 +274,7 @@ class MotorController:
         if unit is not None:
             return self._unit_to_step(unit)
         elif step is not None:
-            if isinstance(step, (tuple, list)):
-                return tuple(step)
-            elif isinstance(step, int):
-                return step, 0
-            elif isinstance(step, float):
-                return int(step), int((step % 1) * 256)
-            else:
-                raise TypeError('Must supply int, float, or a pair thereof.')
+            return self._step_sanitize(step)
         assert False, 'Unreachable code'
 
     # TODO: Rename to rail (?).
@@ -331,7 +358,7 @@ class MotorController:
             step (int): the step number
             microstep (int): the microstep TODO: What range?
         """
-        _logger.debug(f'Getting position of {self.name}')
+        # _logger.debug(f'Getting position of {self.name}')
         position_struct = pyximc.get_position_t()
         result = libximc.get_position(
             self.device_id,
@@ -386,7 +413,7 @@ class MotorController:
     def move_to(self, pos: Optional[Position] = None, *,
                 unit: Optional[UnitPosition] = None,
                 step: Optional[StepPosition] = None,
-                rail: bool = False):
+                rail: bool = False) -> StepPosition:
         """Move to the specified location, in user units (absolute position).
 
         Exactly one of pos, unit, and step should be supplied.
@@ -403,10 +430,15 @@ class MotorController:
             NoUserUnitError: If you supply unit but don't define user units.
             PositionOutOfBoundsError: If rail=False and you supply a position
                 that's out of bounds.
+
+        Returns:
+            (step, microstep) format of where the motor is heading.
         """
         step, microstep = self._parse_position(pos=pos,
                                                unit=unit,
                                                step=step,)
+        if rail:
+            raise NotImplementedError()
         # step, microstep = self._bound_position(step=(step, microstep),
         #                                        rail=rail,)
 
@@ -427,7 +459,73 @@ class MotorController:
         )
         if result != pyximc.Result.Ok:
             raise LibXIMCCommandFailedError(result)
+        return step, microstep
 
+    async def move_to_async(
+            self, pos: Optional[Position] = None, *,
+            unit: Optional[UnitPosition] = None,
+            step: Optional[StepPosition] = None,
+            rail: bool = False,
+            refresh_interval_ms: Optional[float] = None,
+    ) -> StepPosition:
+        """Move to the specified location, in user units (absolute position).
+
+        Exactly one of pos, unit, and step should be supplied.
+        Forwards to MotorController.move_to, but additionally waits until the
+            movement is completed.
+
+        Args:
+            pos: The position to move to, in user units or steps.
+            unit: The position to move to, in user units.
+            step: The position to move to, in (step, microstep) format.
+            rail: If True, then instead of throwing an error if you go out of
+                bounds, it will move as far as allowed.
+            refresh_interval_ms: In ms, how often to check if the motor has
+                arrived at the desired location. This should not be less than
+                10 ms, as that would slow down the controllers.
+
+        Raises:
+            LibXIMCCommandFailedError: If the movement fails
+            NoUserUnitError: If you supply unit but don't define user units.
+            PositionOutOfBoundsError: If rail=False and you supply a position
+                that's out of bounds.
+
+        Returns:
+            (step, microstep) format of where the motor was at when the
+                function ended.
+        """
+        # Refresh interval is in ms, convert to seconds for asyncio.sleep.
+        if refresh_interval_ms is None:
+            refresh_interval_ms = self.refresh_interval_ms
+        refresh_interval_s = refresh_interval_ms / 1000.0
+
+        # Move as normal, retrieve destination position.
+        step, microstep = self.move_to(
+            pos=pos,
+            unit=unit,
+            step=step,
+            rail=rail,
+        )
+        to_pos = (step, microstep)
+
+        # Verbose debugging information
+        debug_position = f'step {step} + {microstep}/256'
+        if self.unit is not None:
+            debug_position += f' ({self._step_to_unit((step, microstep))} ' \
+                              f'{self.unit_name})'
+        _logger.debug(
+            f'Waiting for {self.name} to arrive at {debug_position}'
+        )
+
+        # Wait until we arrive and return it once we're there.
+        while self._get_position() != to_pos:
+            await asyncio.sleep(refresh_interval_s)
+        _logger.debug(
+            f'{self.name} has arrived at {debug_position}'
+        )
+        return to_pos
+
+    @util.depreciate
     def move_by(self, by: Optional[Position] = None, *,
                 unit: Optional[UnitPosition] = None,
                 step: Optional[StepPosition] = None,

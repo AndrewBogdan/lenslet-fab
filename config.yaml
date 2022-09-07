@@ -14,16 +14,25 @@ unit:
   p: [-100.4, 'deg']
   v: [-99.87, 'deg']
 
+# Note: anything less than 10 ms is going to slow down the controller!
+refresh_interval_ms:
+  x: 30
+  y: 30
+  z: 30
+  n: 30
+  p: 30
+  v: 30
+
 geometry:
   # Compare the height of the origin at p=0 and 90 deg.
   p_radius_um: 56.5e3
 
   # Define z=0 when the v-bed is 105 mm off of the xy bed
-  z_zero_um: 0 # 105e3
+  # z_zero_um: 0 # 105e3
 
   # The height which it will try to keep the origin at.
   # Note: The focal point of the laser is at around 150 mm off the xy bed.
-  z_default_um: 0 # 150e3
+  # z_default_um: 0 # 150e3
 
   # We don't need the n-axis to move, so fix it in this position.
   n_default_deg: -45

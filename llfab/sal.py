@@ -4,15 +4,17 @@
 
 from typing import Iterable, TypeAlias, Optional
 
+import asyncio
 import enum
 import datetime
 import logging
 import math
 import time
 
-from IPython import display
+import aiohttp
 import matplotlib.pyplot as plt
 import numpy as np
+from IPython import display
 
 from llfab import ezcad
 from llfab import gas
@@ -86,6 +88,13 @@ class SixAxisLaserController:
     P_UNIT = config['unit']['p']
     V_UNIT = config['unit']['v']
 
+    X_REFRESH_INTERVAL_MS = config['refresh_interval_ms']['x']
+    Y_REFRESH_INTERVAL_MS = config['refresh_interval_ms']['y']
+    Z_REFRESH_INTERVAL_MS = config['refresh_interval_ms']['z']
+    N_REFRESH_INTERVAL_MS = config['refresh_interval_ms']['n']
+    P_REFRESH_INTERVAL_MS = config['refresh_interval_ms']['p']
+    V_REFRESH_INTERVAL_MS = config['refresh_interval_ms']['v']
+
     # Compare the height of the origin at p=0 and 90 deg.
     P_RADIUS_UM = float(config['geometry']['p_radius_um'])
 
@@ -143,36 +152,42 @@ class SixAxisLaserController:
             self.x = motor.MotorController(
                 serial=self.X_SERIAL,
                 unit=self.X_UNIT,
+                refresh_interval_ms=self.X_REFRESH_INTERVAL_MS,
             )
             self.motors += (self.x, )
         if Motors.Y in self._required_motors:
             self.y = motor.MotorController(
                 serial=self.Y_SERIAL,
                 unit=self.Y_UNIT,
+                refresh_interval_ms=self.Y_REFRESH_INTERVAL_MS,
             )
             self.motors += (self.y, )
         if Motors.Z in self._required_motors:
             self.z = motor.MotorController(
                 serial=self.Z_SERIAL,
                 unit=self.Z_UNIT,
+                refresh_interval_ms=self.Z_REFRESH_INTERVAL_MS,
             )
             self.motors += (self.z, )
         if Motors.N in self._required_motors:
             self.n = motor.MotorController(
                 serial=self.N_SERIAL,
                 unit=self.N_UNIT,
+                refresh_interval_ms=self.N_REFRESH_INTERVAL_MS,
             )
             self.motors += (self.n, )
         if Motors.P in self._required_motors:
             self.p = motor.MotorController(
                 serial=self.P_SERIAL,
                 unit=self.P_UNIT,
+                refresh_interval_ms=self.P_REFRESH_INTERVAL_MS,
             )
             self.motors += (self.p, )
         if Motors.V in self._required_motors:
             self.v = motor.MotorController(
                 serial=self.V_SERIAL,
                 unit=self.V_UNIT,
+                refresh_interval_ms=self.V_REFRESH_INTERVAL_MS,
             )
             self.motors += (self.v, )
 
@@ -291,6 +306,9 @@ class SixAxisLaserController:
         pos = self.get_position()
 
         # For each coordinate, check if we're within a microstep.
+        #  Note: we check within-a-microstep because this function is meant to
+        #  be given in user units, as hence the supplied coordinates might be
+        #  between microsteps.
         for coord, ax_pos, (scale, _) in zip(coords, pos, units):
             if coord is None: continue
 
@@ -337,8 +355,9 @@ class SixAxisLaserController:
             mot.set_zero()
 
     # --- Movement Functions --------------------------------------------------
-    def to_pos_soft(self, x_um: float, y_um: float, z_um: float,
-                    n_deg, p_deg, v_deg, rail: bool = False):
+    async def to_pos_soft(self, x_um: float, y_um: float, z_um: float,
+                          n_deg: float, p_deg: float, v_deg: float,
+                          rail: bool = False):
         """Moves the 6-axis to the specified coordinate, ignoring motors that
         are not captured.
 
@@ -358,11 +377,13 @@ class SixAxisLaserController:
                 that's out of bounds.
         """
         coords = [x_um, y_um, z_um, n_deg, p_deg, v_deg]
+        tasks = set()
         for mot, coord in zip(self._six_motors, coords):
             if mot is not None:
-                mot.move_to(unit=coord, rail=rail)
+                tasks.add(mot.move_to_async(unit=coord, rail=rail))
+        await asyncio.gather(*tasks)
 
-    def to_pos_sph(
+    async def to_pos_sph(
             self,
             azimuth: float,
             incline: float,
@@ -381,14 +402,16 @@ class SixAxisLaserController:
                       f'{int(o_pos[1])}um, {int(o_pos[2])}um)')
 
         # Actually move it.
-        self.x.move_to(unit=x_um)
-        self.y.move_to(unit=y_um)
-        self.z.move_to(unit=z_um)
-        # self.n.move_to(unit=n_deg)
-        self.p.move_to(unit=p_deg)
-        self.v.move_to(unit=v_deg)
+        await asyncio.gather(
+            self.x.move_to_async(unit=x_um),
+            self.y.move_to_async(unit=y_um),
+            self.z.move_to_async(unit=z_um),
+            # self.n.move_to_async(unit=n_deg),
+            self.p.move_to_async(unit=p_deg),
+            self.v.move_to_async(unit=v_deg),
+        )
 
-    def to_pos_xy(self, x_um: float, y_um: float, rail: bool = False):
+    async def to_pos_xy(self, x_um: float, y_um: float, rail: bool = False):
         """Moves the 6-axis in X and Y, in um.
 
         Requires those two motors. To move step-wise, see
@@ -408,33 +431,106 @@ class SixAxisLaserController:
         """
         self._check_captured(Motors.X, Motors.Y)
 
-        self.x.move_to(unit=x_um, rail=rail)
-        self.y.move_to(unit=y_um, rail=rail)
+        await asyncio.gather(
+            self.x.move_to_async(unit=x_um, rail=rail),
+            self.y.move_to_async(unit=y_um, rail=rail),
+        )
 
-    def to_zero(self):
+    async def to_zero(self):
         """Move all motors to their zero position."""
         _logger.debug(f'Moving all motors to zero.')
+        tasks = set()
         for mot in self.motors:
-            mot.move_to(0)
+            tasks.add(mot.move_to(0))
+        await asyncio.gather(*tasks)
 
     # --- Toolpath Runner -----------------------------------------------------
-    def run_toolpath(
+    async def run_toolpath(
             self,
             toolpath,
             origin,
 
-            lase: bool,
-            lase_time: float,
-            move_time: float = 3.0,
+            do_lase: bool,
+            lase_time_ms: float,
+            move_timeout_s: float = 5.0,
+            net_timeout_s: float = 10.0,
 
             plot_type: Optional[str] = None,
             plot_args: Optional[dict] = None,
     ):
-        """TODO"""
-        # TODO: Should this be configurable?
-        move_tick = 30
+        """Runs the supplied toolpath.
+
+        Args:
+            toolpath: The toolpath to perform. Don't re-create it each time you
+                run this function, as they track progress, and you can continue
+                where you left off.
+            origin: The origin that you want the toolpath run relative to.
+                Check it with SALC.get_position() at the same time you make
+                your toolpath, and don't lose track of it!
+            do_lase: bool, if True, will actually try to run the laser.
+                if False, will simply wait. Useful for testing.
+            lase_time_ms: float, in milliseconds, the amount of time it takes
+                the laser to run. It will wait exactly this long each time, so
+                get it as close as you can.
+            move_timeout_s: float, in seconds, the amount of time that
+                the computer will wait before deciding that a movement failed.
+                Lowering it will *not* speed up anything, it will only cause it
+                to break when a particularly long movement occurs.
+            net_timeout_s: float, in seconds, the amount of time to wait before
+                deciding that there is no internet access.
+            plot_type: str, one of the following options:
+                - 'xy', for an xy plot, viewed from the top.
+                - 'sph', for a spherical plot, meant for lenslets.
+            plot_args: dict, arguments for toolpath.plot. See harness.py for
+                more info.
+        """
+        # --- Sanitize input ---
         origin = np.array(origin)
         plot_args = plot_args or {}
+
+        # --- Make async helper functions ---
+        # This seems like a roundabout way to do this, but
+        #  - Instructions do toolpath.confirm() ASAP and iff they're done
+        #  - This allows for much more verbose errors
+        #  - The main instruction loop is easier to read
+        #  and I think that the 2nd-order functions are worth that.
+        async def movement(to_pos):
+            print(f'Moving to ({tuple(to_pos)}).')
+            try:
+                await asyncio.wait_for(
+                    self.to_pos_soft(*to_pos),
+                    timeout=move_timeout_s,
+                )
+                toolpath.confirm()
+            except asyncio.TimeoutError:
+                raise MovementTimeoutError(
+                    f'Movement timed out, at position '
+                    f'{self.get_position()}, not {to_pos}.)'
+                )
+
+        async def lasing():
+            print(f'Lasing at {self.get_position()}.')
+            if do_lase:
+                with self.gas():
+                    self.lase()
+                    await asyncio.sleep(lase_time_ms / 1000)
+            else:
+                await asyncio.sleep(lase_time_ms / 1000)
+            toolpath.confirm()
+
+        async def ping():
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get('http://google.com',
+                                           timeout=net_timeout_s) as response:
+                        if response.status != 200:
+                            raise Exception(
+                                f'Connecting to Google, got response '
+                                f'#{response.status}, expected 200.')
+            except Exception:
+                raise NoInternetConnectionError(
+                    'Cannot connect to Google, operation suspended. See '
+                    'traceback for more details.')
 
         # --- Check the bounds ---
         positions = list(zip(*toolpath.positions))
@@ -449,58 +545,57 @@ class SixAxisLaserController:
                         f'Position {relative_pos + origin[index]:.2f}'
                     )
 
+        # --- Run the toolpath ---
+        instruction_task = None
+        connection_task = asyncio.create_task(ping())
         for instruction in toolpath:
             display.clear_output(wait=True)
+
+            # --- Check internet connection ---
+            # Do this before there's a risk of running any instructions
+            # TODO: Perhaps, to save time, I should only await this before
+            #  each lase, as that's the fire hazard step
+            await connection_task
+            connection_task = asyncio.create_task(ping())
+
+            # --- Dispatch instruction task ---
+            # This block should go first, as it takes the longest to run.
+            #  Asynchronously, this lets everything else run in the meantime.
+            match instruction:
+                case (Inst.GO, *to_pos_relative):
+                    # Calculate absolute position to go to
+                    to_pos_relative = np.array(to_pos_relative)
+                    to_pos_relative.resize((6, ))
+                    to_pos = origin + to_pos_relative
+
+                    # Schedule the movement task
+                    instruction_task = asyncio.create_task(movement(to_pos))
+
+                case Inst.LASE:
+                    # Schedule the lasing task
+                    instruction_task = asyncio.create_task(lasing())
 
             # --- Calculate & Print Duration ---
             lases_done, lases_total = toolpath.lase_status
             moves_done, moves_total = toolpath.move_status
             lases_left = lases_total - lases_done
             moves_left = moves_total - moves_done
-            duration_s = lase_time * lases_left + 0.5 * moves_left
+            duration_s = lase_time_ms * lases_left + 0.5 * moves_left
             finish_time = datetime.datetime.now() + \
                 datetime.timedelta(seconds=duration_s)
             print(f'Projected finish time: {finish_time}.')
 
             # --- Plot the Progress ---
+            # TODO: Make this happen rarely, or optionally, as it's expensive
+            #  maybe just when it's lasing ?
             toolpath.plot(kind=plot_type, **plot_args)
             plt.show()
-            match instruction:
-                case (Inst.GO, *to_pos_relative):
-                    to_pos_relative = np.array(to_pos_relative)
-                    to_pos_relative.resize((6, ))
-                    to_pos = origin + to_pos_relative
-                    print(f'Moving to ({tuple(to_pos)}).')
 
-                    # Move the arm
-                    self.to_pos_soft(*to_pos)
+            # This ensures that the instructions go in order, and that
+            #  toolpath.confirm() is called before the next instruction is
+            #  pulled from the list.
+            await instruction_task
 
-                    # Wait for it to move
-                    # We're only checking the motors which are moving away
-                    #  from the initial position.
-                    check = [coord for coord in to_pos if coord]
-                    for _ in range(int(move_time * move_tick)):
-                        if self.at(*check):
-                            time.sleep(1)
-                            break
-                        time.sleep(1 / move_tick)
-
-                    # If it's moved, confirm. Otherwise, error.
-                    if self.at(*check):
-                        toolpath.confirm()
-                    else:
-                        raise Exception(
-                            f'At position {self.get_position()}, not {to_pos}.')
-
-                case Inst.LASE:
-                    print(f'Lasing at {self.get_position()}.')
-                    if lase:
-                        with self.gas():
-                            self.lase()
-                            time.sleep(lase_time)
-                    else:
-                        time.sleep(lase_time)
-                    toolpath.confirm()
         # --- Finished Routine ---
         print('Done!')
         # TODO: Send an email to Shawn
@@ -541,3 +636,12 @@ class MissingMotorError(Exception):
         missing_msg = ''.join(f'{str(m.value).upper()}, ' for m in need
                               if m not in captured)[:-2]
         super().__init__(message.format(need_msg, missing_msg))
+
+
+class MovementTimeoutError(Exception):
+    """Raised when moving takes too long or is expected to never complete."""
+
+
+class NoInternetConnectionError(Exception):
+    """Raised when internet connection fails during toolpath execution."""
+    pass
