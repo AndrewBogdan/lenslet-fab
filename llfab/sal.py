@@ -208,6 +208,22 @@ class SixAxisLaserController:
         self._free = True
 
     # --- Utility -------------------------------------------------------------
+    def _check_captured_for(self,
+                            x_val: Optional = None,
+                            y_val: Optional = None,
+                            z_val: Optional = None,
+                            n_val: Optional = None,
+                            p_val: Optional = None,
+                            v_val: Optional = None, ):
+        """Returns True if the motors corresponding to the non-None
+        coordinates are captured, forwarding to SALC._check_captured."""
+        all_motors = (Motors.X, Motors.Y, Motors.Z, Motors.N, Motors.P,
+                      Motors.V)
+        mot_vals = (x_val, y_val, z_val, n_val, p_val, v_val)
+        required = [mot for index, mot in enumerate(all_motors)
+                    if mot_vals[index] is not None]
+        return self._check_captured(*required)
+
     def _check_captured(self, *motors: Motors):
         """Returns True if all of the specified motors were required at
         at instantiation and raise a MissingMotorError otherwise"""
@@ -291,16 +307,12 @@ class SixAxisLaserController:
         Returns: True if the motors are within a microstep of the given
         coordinates, False otherwise.
         """
-        all_motors = [Motors.X, Motors.Y, Motors.Z, Motors.N, Motors.P,
-                      Motors.V]
         units = [self.X_UNIT, self.Y_UNIT, self.Z_UNIT, self.N_UNIT,
                  self.P_UNIT, self.V_UNIT]
         coords = (x_um, y_um, z_um, n_deg, p_deg, v_deg)
 
         # Check that we have captured all the motors we're asking about.
-        required = [mot for index, mot in enumerate(all_motors)
-                    if coords[index] is not None]
-        self._check_captured(*required)
+        self._check_captured_for(*coords)
 
         # Get the current position
         pos = self.get_position()
@@ -355,33 +367,65 @@ class SixAxisLaserController:
             mot.set_zero()
 
     # --- Movement Functions --------------------------------------------------
-    async def to_pos_soft(self, x_um: float, y_um: float, z_um: float,
-                          n_deg: float, p_deg: float, v_deg: float,
-                          rail: bool = False):
-        """Moves the 6-axis to the specified coordinate, ignoring motors that
-        are not captured.
+    async def _to_pos(self,
+                      x_um: Optional[float] = None,
+                      y_um: Optional[float] = None,
+                      z_um: Optional[float] = None,
+                      n_deg: Optional[float] = None,
+                      p_deg: Optional[float] = None,
+                      v_deg: Optional[float] = None,
+                      rail: bool = False):
+        """Internal movement function: Moves the 6-axis to the specified
+        coordinates. It will silently ignore uncaptured motors, so be sure to
+        use SALC._check_captured before calling it.
 
-        Args:
-            x_um: The x-position to go to, in micrometers.
-            y_um: The y-position to go to, in micrometers.
-            z_um: The z-position to go to, in micrometers.
-            n_deg: The n-position to go to, in degrees.
-            p_deg: The n-position to go to, in degrees.
-            v_deg: The n-position to go to, in degrees.
-            rail: If True, then instead of throwing an error if you go out of
-                bounds, it will move as far as allowed.
+        See to_pos for more argument documentation.
 
         Raises:
             LibXIMCCommandFailedError: If the movement fails.
             PositionOutOfBoundsError: If rail=False and you supply a position
                 that's out of bounds.
         """
-        coords = [x_um, y_um, z_um, n_deg, p_deg, v_deg]
+        coords = (x_um, y_um, z_um, n_deg, p_deg, v_deg)
+
         tasks = set()
         for mot, coord in zip(self._six_motors, coords):
-            if mot is not None:
+            if coord is not None and mot is not None:
                 tasks.add(mot.move_to_async(unit=coord, rail=rail))
         await asyncio.gather(*tasks)
+
+    async def to_pos(self,
+                     x_um: Optional[float] = None,
+                     y_um: Optional[float] = None,
+                     z_um: Optional[float] = None,
+                     n_deg: Optional[float] = None,
+                     p_deg: Optional[float] = None,
+                     v_deg: Optional[float] = None,
+                     rail: bool = False):
+        """Moves the 6-axis to the specified coordinates, ignoring coordinates
+        that are not supplied or are None.
+
+        Args:
+            x_um: (optional) The x-position to go to, in micrometers.
+            y_um: (optional) The y-position to go to, in micrometers.
+            z_um: (optional) The z-position to go to, in micrometers.
+            n_deg: (optional) The n-position to go to, in degrees.
+            p_deg: (optional) The n-position to go to, in degrees.
+            v_deg: (optional) The n-position to go to, in degrees.
+            rail: If True, then instead of throwing an error if you go out of
+                bounds, it will move as far as allowed.
+
+        Raises:
+            LibXIMCCommandFailedError: If the movement fails.
+            MissingMotorError: If you did not capture a motor that you
+                supplied a coordinate for.
+            PositionOutOfBoundsError: If rail=False and you supply a position
+                that's out of bounds.
+        """
+        coords = (x_um, y_um, z_um, n_deg, p_deg, v_deg)
+        # Check that we have captured all the motors we're asking about.
+        self._check_captured_for(*coords)
+        await self._to_pos(*coords, rail=rail)
 
     async def to_pos_sph(
             self,
@@ -401,14 +445,14 @@ class SixAxisLaserController:
         _logger.debug(f'Moving origin to ({int(o_pos[0])}um, '
                       f'{int(o_pos[1])}um, {int(o_pos[2])}um)')
 
-        # Actually move it.
-        await asyncio.gather(
-            self.x.move_to_async(unit=x_um),
-            self.y.move_to_async(unit=y_um),
-            self.z.move_to_async(unit=z_um),
-            # self.n.move_to_async(unit=n_deg),
-            self.p.move_to_async(unit=p_deg),
-            self.v.move_to_async(unit=v_deg),
+        await self._to_pos(
+            x_um=x_um,
+            y_um=y_um,
+            z_um=z_um,
+            n_deg=None,
+            p_deg=p_deg,
+            v_deg=v_deg,
+            rail=False,
         )
 
     async def to_pos_xy(self, x_um: float, y_um: float, rail: bool = False):
@@ -424,20 +468,21 @@ class SixAxisLaserController:
                 bounds, it will move as far as allowed.
 
         Raises:
-            MissingMotorError: If you did not capture motors X and Y.
             LibXIMCCommandFailedError: If the movement fails.
+            MissingMotorError: If you did not capture motors X and Y.
             PositionOutOfBoundsError: If rail=False and you supply a position
                 that's out of bounds.
         """
         self._check_captured(Motors.X, Motors.Y)
-
-        await asyncio.gather(
-            self.x.move_to_async(unit=x_um, rail=rail),
-            self.y.move_to_async(unit=y_um, rail=rail),
+        await self._to_pos(
+            x_um=x_um,
+            y_um=y_um,
+            rail=rail,
         )
 
     async def to_zero(self):
         """Move all motors to their zero position."""
+        # TODO: This doesn't check if zero is out-of-bounds.
         _logger.debug(f'Moving all motors to zero.')
         tasks = set()
         for mot in self.motors:
@@ -498,7 +543,9 @@ class SixAxisLaserController:
             print(f'Moving to ({tuple(to_pos)}).')
             try:
                 await asyncio.wait_for(
-                    self.to_pos_soft(*to_pos),
+                    # Using unsafe _to_pos here, relies on that we checked the
+                    #  captured motors earlier.
+                    self._to_pos(*to_pos),
                     timeout=move_timeout_s,
                 )
                 toolpath.confirm()
@@ -531,6 +578,9 @@ class SixAxisLaserController:
                 raise NoInternetConnectionError(
                     'Cannot connect to Google, operation suspended. See '
                     'traceback for more details.')
+
+        # --- Check required motors ---
+        self._check_captured(*toolpath.required_motors)
 
         # --- Check the bounds ---
         positions = list(zip(*toolpath.positions))

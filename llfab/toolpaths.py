@@ -11,10 +11,28 @@ from llfab import harness
 from llfab.harness import Inst as In
 
 
+def _lase_z_steps(z_steps: tuple):
+    """Lase several times at the same XY-location, changing z-height according
+    to z_steps.
+
+    Args:
+        z_steps: A tuple of floats of how to move the Z-Axis between lases. If
+            empty, it will lase once without moving.
+
+    """
+    yield In.LASE
+
+    for z_step in z_steps:
+        yield In.MOVE, 0, 0, z_step
+        yield In.LASE
+    yield In.MOVE, 0, 0, -sum(z_steps)
+
+
 @harness.toolpath
 def path_xy_grid(
     shape: tuple[int, int] = (10, 10),
     stride: tuple[float, float] = (1000.0, 1000.0),
+    z_steps: tuple = (),
 ):
     """Lase in a rectangular grid.
 
@@ -23,13 +41,15 @@ def path_xy_grid(
             formatted as (rows, columns).
         stride: (pair of floats) The distance between lases, in both x and y,
             formatted as (stride_x, stride_y)
+        z_steps: A tuple of floats of how to move the Z-Axis between lases. If
+            empty (the default), it will lase once without moving.
     """
     rows, cols = shape
     stride_x, stride_y = stride
 
     for _ in range(rows):
         for _ in range(cols):
-            yield In.LASE
+            yield from _lase_z_steps(z_steps)
             yield In.MOVE, 0, stride_y
         yield In.MOVE, stride_x, 0
         yield In.MOVE, 0, -1 * stride_y * cols
@@ -40,6 +60,7 @@ def path_xy_grid(
 def path_xy_hex_grid(
     dimensions: tuple[float, float] = (1000.0, 1000.0),
     pitch: tuple[float, float] = (100.0, 115.47),
+    z_steps: tuple = (),
 ):
     """Lase a rectangular region in a hexagonal pattern.
 
@@ -65,6 +86,9 @@ def path_xy_hex_grid(
             pitch_y = (2 / sqrt(3)) * pitch_x.
 
             Your input should be in the format (pitch_x, pitch_y).
+
+        z_steps: A tuple of floats of how to move the Z-Axis between lases. If
+            empty (the default), it will lase once without moving.
     """
     dim_x, dim_y = dimensions
     pitch_x, pitch_y = pitch
@@ -83,7 +107,7 @@ def path_xy_hex_grid(
     direction = -1
     for _ in range(num_x):
         for _ in range(num_y):
-            yield In.LASE
+            yield from _lase_z_steps(z_steps)
             # Move to the left or right in Y
             yield In.MOVE, 0, pitch_y * direction
         # Move down in X, back half of Y
@@ -97,6 +121,7 @@ def path_xy_hex_grid(
 def path_xy_hex_grid_circle(
     radius: float = 500.0,
     pitch: tuple = (100.0, 115.47),
+    z_steps: tuple = (),
 ):
     """Lase a circular region in a hexagonal pattern.
 
@@ -104,6 +129,8 @@ def path_xy_hex_grid_circle(
         radius: (float) The radius in microns around the starting point to fill.
         pitch: (pair of floats) The dimensions of the hexagonal pattern, in
             microns. See `path_xy_hex_grid` for a guide on what to supply.
+        z_steps: A tuple of floats of how to move the Z-Axis between lases. If
+            empty (the default), it will lase once without moving.
     """
     radius = float(radius)
     pitch_x = float(pitch[0])
@@ -123,7 +150,7 @@ def path_xy_hex_grid_circle(
         while pos[1] * direction <= radius:
             # Lase only if we're inside the circle
             if math.sqrt(pos[0] ** 2 + pos[1] ** 2) <= radius:
-                yield In.LASE
+                yield from _lase_z_steps(z_steps)
             # Move to the left or right in Y
             mov = np.array((0, pitch_y * direction))
             pos += mov
@@ -141,6 +168,7 @@ def path_xy_hex_grid_circle(
 def path_xy_circle(
     radius: float = 500.0,
     stride: float = 100.0,
+    z_steps: tuple = (),
 ):
     """Lase in a circle, centered at the starting point.
 
@@ -149,6 +177,8 @@ def path_xy_circle(
         stride: (float) The distance (along the circle) between lases. For
             example, a unit circle with stride of pi would have two lases in
             total, one at 0 and one at 180 degrees.
+        z_steps: A tuple of floats of how to move the Z-Axis between lases. If
+            empty (the default), it will lase once without moving.
     """
 
     stride_angle = stride / radius
@@ -157,5 +187,5 @@ def path_xy_circle(
     while angle < 2 * math.pi:
         yield In.GO, math.cos(angle) * radius, math.sin(angle) * radius
         angle += stride_angle
-        yield In.LASE
+        yield from _lase_z_steps(z_steps)
     yield In.RETURN

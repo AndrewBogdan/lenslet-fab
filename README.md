@@ -14,7 +14,6 @@ I'll write something here once I have a reason to.
 1. Plotting
    - Automatically adjust marker size based on number of elements (or maybe 
        the minimum distance between them?)
-   - Ask Shawn if the rotated toolpath is correct
    - Show points that it can and can't lase when it errors.
 2. Harness
     - Make sure we don't lase the same spot twice (a check routine)
@@ -33,6 +32,7 @@ I'll write something here once I have a reason to.
    - Allow plotting absolute coordinates too (?)
    - Remove old bound code
    - Implement railing behavior.
+   - PositionOutOfBounds error is never actually raised.
 4. Spherical Path
    - Arguments: pitch, diameter/radius, and angle from zenith (inside of cone)
    - Tessolate the sphere with triangles (icosahedron-based?)

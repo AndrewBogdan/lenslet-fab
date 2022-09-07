@@ -17,7 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from llfab import sal
-from llfab.sal import Inst
+from llfab.sal import Inst, Motors
 
 
 Instruction: TypeAlias = tuple[Inst, ...]
@@ -41,6 +41,10 @@ class _Toolpath(Iterator):
         self.insts = insts
         self.positions = positions
         self.lases = lases
+
+        motor_positions = list(zip(Motors, zip(*self.positions)))
+        self.required_motors = [mot for mot, positions in motor_positions
+                                if any(positions)]
 
         self._pointer = 0
         self._next = None
@@ -93,7 +97,6 @@ class _Toolpath(Iterator):
                 case Inst.RETURN:
                     pos = np.array((0.0, ) * 6)
                     record_position()
-                    insts.append((Inst.GO, *pos.copy()))
 
                 case Inst.FENCE:
                     # This doesn't actually correspond to any instruction,
