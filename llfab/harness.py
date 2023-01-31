@@ -9,6 +9,7 @@ from collections.abc import Iterator
 import enum
 import functools
 import math
+import re
 
 import matplotlib.pyplot as plt
 from matplotlib import cm
@@ -29,6 +30,12 @@ class _Toolpath(Iterator):
     """A custom iterator class to represent an iterator of tool instructions.
     In addition to acting like a normal iterator, has utilities for plotting,
     visualizing, error-checking, and toolpath simplification."""
+
+    # Format strings for __repr__
+    HEADER_FMT = '{0:^5} | {1:^5} | {2:^10} | {3:^10} |' \
+                 ' {4:^10} | {5:^10} | {6:^10} | {7:^10}\n'
+    ROW_FMT = '{0:^5} | {1:^5} | {2:>10.3f} | {3:>10.3f} |' \
+              ' {4:>10.3f} | {5:>10.3f} | {6:>10.3f} | {7:>10.3f}\n'
 
     def __init__(self, inst_iterator: Iterator):
         """Make a toolpath, wrapping the given iterator. See `toolpath` for a
@@ -51,6 +58,9 @@ class _Toolpath(Iterator):
 
         self._pos_num = 0
         self._lase_num = 0
+
+        assert all(lase in self.positions for lase in self.lases), \
+            'Toolpath.lases is not a subset of Toolpath.positions.'
 
     def __next__(self):
         """TODO"""
@@ -345,6 +355,41 @@ class _Toolpath(Iterator):
         # ax.set_zlabel('Z')
 
         return ax
+
+    def __repr__(self):
+        """Prints the positions and lases in a text table."""
+        # Print a header for the table
+        header = self.HEADER_FMT.format(
+            'Pos#', 'Lase#',
+            f'X ({sal.SALC.X_UNIT[1]})',
+            f'Y ({sal.SALC.Y_UNIT[1]})',
+            f'Z ({sal.SALC.Z_UNIT[1]})',
+            f'N ({sal.SALC.N_UNIT[1]})',
+            f'P ({sal.SALC.P_UNIT[1]})',
+            f'V ({sal.SALC.V_UNIT[1]})',
+        )
+        string = header
+
+        # Divider row
+        string += re.sub(
+            pattern=r'[^|\n]',
+            repl='–',
+            string=header,
+        )
+
+        # Print all the values
+        for pos_num, position in enumerate(self.positions):
+            x, y, z, n, p, v = position
+
+            try:
+                lase_num = self.lases.index(position)
+            except ValueError:
+                lase_num = '–––'
+
+            string += self.ROW_FMT.format(pos_num, lase_num, x, y, z, n, p, v)
+        return string
+
+    __str__ = __repr__
 
 
 def toolpath(inst_gen_function: Generator):
