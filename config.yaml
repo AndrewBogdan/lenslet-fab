@@ -25,7 +25,7 @@ refresh_interval_ms:
 
 geometry:
   # Compare the height of the origin at p=0 and 90 deg.
-  p_radius_um: 56.5e3
+  p_radius_um: -10.75e3
 
   # Define z=0 when the v-bed is 105 mm off of the xy bed
   # z_zero_um: 0 # 105e3
@@ -34,5 +34,21 @@ geometry:
   # Note: The focal point of the laser is at around 150 mm off the xy bed.
   # z_default_um: 0 # 150e3
 
-  # We don't need the n-axis to move, so fix it in this position.
-  n_default_deg: -45
+  # The default position of motors that are not currently captured, in units.
+  default_pos:
+    x: 0
+    y: 0
+    z: 0
+    n: -90  # deg
+    p: 0
+    v: 0
+
+  # Note: 0deg in N is has the machinery to the -x of the bed:
+  #  0 deg:      90 deg:     180 deg:     -90 deg:
+  #   ==           (0)           ==        |||||
+  #   ==--0         |         0--==          |
+  #   ==          |||||          ==         (0)
+
+  # Should an incline of 15 deb be P = +15 deg or -15 deg?
+  #  That is, which direction do you prefer to incline, + or - P?
+  incline_direction: 1

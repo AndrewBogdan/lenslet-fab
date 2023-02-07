@@ -33,7 +33,7 @@ class MotorController:
     def __init__(self,
                  serial: int,
                  unit: Optional[Tuple[float, str]] = None,
-                 refresh_interval_ms: float = 30.0, ):
+                 refresh_interval_ms: float = 3.0, ):
         # --- Instance Variables ---
         #  Device connection information
         self.port: str
@@ -375,10 +375,14 @@ class MotorController:
     def get_boundaries(self) -> (UnitPosition, UnitPosition):
         """Get the motor's boundaries, in user units."""
         lower_boundary_steps, upper_boundary_steps = self._get_boundaries()
-        return (
-            self._step_to_unit(lower_boundary_steps),
-            self._step_to_unit(upper_boundary_steps),
-        )
+        left_bound = self._step_to_unit(lower_boundary_steps)
+        right_bound = self._step_to_unit(upper_boundary_steps)
+        if self.unit.A > 0:
+            return left_bound, right_bound
+        elif self.unit.A < 0:
+            return right_bound, left_bound
+        else:
+            assert False, 'User unit should never be zero.'
 
     # TODO: Let this also give it in steps?
     def get_position(self) -> UnitPosition:
@@ -438,7 +442,7 @@ class MotorController:
                                                unit=unit,
                                                step=step,)
         if rail:
-            raise NotImplementedError()
+            raise NotImplementedError('Railing behavior is not implemented.')
         # step, microstep = self._bound_position(step=(step, microstep),
         #                                        rail=rail,)
 

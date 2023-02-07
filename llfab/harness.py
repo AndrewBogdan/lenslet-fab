@@ -6,8 +6,8 @@ generators of instructions; see llfab/toolpaths.py for examples.
 
 from typing import Generator, TypeAlias, Optional
 from collections.abc import Iterator
-import enum
 import functools
+import itertools
 import math
 import re
 
@@ -18,7 +18,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from llfab import sal
-from llfab.sal import Inst, Motors
+from llfab.sal import Inst, Motors, SALC
 
 
 Instruction: TypeAlias = tuple[Inst, ...]
@@ -49,9 +49,19 @@ class _Toolpath(Iterator):
         self.positions = positions
         self.lases = lases
 
-        motor_positions = list(zip(Motors, zip(*self.positions)))
-        self.required_motors = [mot for mot, positions in motor_positions
-                                if any(positions)]
+        # This long block is to check which motors are required.
+        #  It checks if the maximal displacement that the motor achieves is
+        #  less than 1/100th of the motor resolution. If so, then that motor
+        #  is unnecessary.
+        motor_positions = np.asarray(list(zip(*self.positions)))
+        motor_displacement = np.max(motor_positions, axis=1) - \
+                             np.min(motor_positions, axis=1)
+        motor_resolution = 1 / (256 * np.array(
+            [sal.SALC.X_UNIT[0], sal.SALC.Y_UNIT[0], sal.SALC.Z_UNIT[0],
+             sal.SALC.N_UNIT[0], sal.SALC.P_UNIT[0], sal.SALC.V_UNIT[0]]
+        ))
+        motor_required = motor_displacement > (motor_resolution / 100)
+        self.required_motors = tuple(itertools.compress(Motors, motor_required))
 
         self._pointer = 0
         self._next = None
@@ -74,10 +84,10 @@ class _Toolpath(Iterator):
     def _get_instructions(inst_iterator: Iterator):
         """Get the list of instructions corresponding to the toolpath."""
         insts: list[Instruction] = []
-        positions: list[SALPosition] = [(0,) * 6]
+        positions: list[SALPosition] = [tuple(sal.SALC.DEFAULT_POS)]
         lases: list[SALPosition] = []
 
-        pos: SALPositionNP = np.array((0.0,) * 6)
+        pos: SALPositionNP = np.array(sal.SALC.DEFAULT_POS)
 
         def record_position():
             nonlocal pos
@@ -94,9 +104,10 @@ class _Toolpath(Iterator):
                     pos += mov_by
 
                 case (Inst.GO, *pos_to):
+                    pos_to += [None] * (6 - len(pos_to))  # Pad it to 6
                     pos_to = np.array(pos_to)
-                    pos_to.resize((6, ))
-                    pos = pos_to.copy()
+                    mask = [val is not None for val in pos_to]
+                    pos[mask] = pos_to[mask]
 
                 case (Inst.GO_SPH, *pos_sph_to):
                     pos_sph_to = np.array(pos_sph_to)
@@ -105,7 +116,7 @@ class _Toolpath(Iterator):
                     pos = pos_to.copy()
 
                 case Inst.RETURN:
-                    pos = np.array((0.0, ) * 6)
+                    pos = np.array(sal.SALC.DEFAULT_POS)
                     record_position()
 
                 case Inst.FENCE:
@@ -378,15 +389,20 @@ class _Toolpath(Iterator):
         )
 
         # Print all the values
+        lase_num = 0
         for pos_num, position in enumerate(self.positions):
             x, y, z, n, p, v = position
 
-            try:
-                lase_num = self.lases.index(position)
-            except ValueError:
-                lase_num = '–––'
+            # Iterate through lases in lock-step
+            if lase_num >= len(self.lases):
+                lase_str = '---'
+            elif self.lases[lase_num] == position:
+                lase_str = str(lase_num)
+                lase_num += 1
+            else:
+                lase_str = '–––'
 
-            string += self.ROW_FMT.format(pos_num, lase_num, x, y, z, n, p, v)
+            string += self.ROW_FMT.format(pos_num, lase_str, x, y, z, n, p, v)
         return string
 
     __str__ = __repr__

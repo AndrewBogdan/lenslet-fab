@@ -20,6 +20,7 @@ from llfab import ezcad
 from llfab import gas
 from llfab import motor
 from llfab import config
+from llfab import util
 
 
 _logger = logging.getLogger(__name__)
@@ -107,8 +108,19 @@ class SixAxisLaserController:
     # TODO: This is not being used
     # Z_DEFAULT_UM = float(config['geometry']['z_default_um'])
 
-    # We don't need the n-axis to move, so fix it in this position.
-    N_DEFAULT_DEG = float(config['geometry']['n_default_deg'])
+    # The default position of motors that are not currently captured, in units.
+    X_DEFAULT_POS = float(config['geometry']['default_pos']['x'])
+    Y_DEFAULT_POS = float(config['geometry']['default_pos']['y'])
+    Z_DEFAULT_POS = float(config['geometry']['default_pos']['z'])
+    N_DEFAULT_POS = float(config['geometry']['default_pos']['n'])
+    P_DEFAULT_POS = float(config['geometry']['default_pos']['p'])
+    V_DEFAULT_POS = float(config['geometry']['default_pos']['v'])
+    DEFAULT_POS = (X_DEFAULT_POS, Y_DEFAULT_POS, Z_DEFAULT_POS,
+                   N_DEFAULT_POS, P_DEFAULT_POS, V_DEFAULT_POS)
+
+    # Should an incline of 15 deb be P = +15 deg or -15 deg?
+    #  That is, which direction do you prefer to incline, + or - P?
+    # INCLINE_DIR = int(config['geometry']['incline_direction'])
 
     # assert Z_DEFAULT_UM > Z_ZERO_UM + P_RADIUS_UM, 'If the default z ' \
     #     'position for the lenslet is less than the height of the P_Axis\'s ' \
@@ -264,7 +276,7 @@ class SixAxisLaserController:
         """Gets the 6-coordinates corresponding to a given spherical
         coordinate system."""
         # The angles are independent, and we calculate the xyz.
-        n_deg = cls.N_DEFAULT_DEG
+        n_deg = cls.N_DEFAULT_POS
         p_deg = incline
         v_deg = azimuth
 
@@ -338,19 +350,21 @@ class SixAxisLaserController:
         return self.calc_origin(*self.get_position())
 
     def get_position(self) -> tuple[float]:
-        """Return a tuple of all the motors' positions. Defaults to 0 for
-        non-captured motors."""
-        return tuple(float(m.get_position()) if m is not None else 0.0
-                     for m in self._six_motors)
+        """Return a tuple of all the motors' positions. Defaults to the
+         configured default for non-captured motors."""
+        return tuple(float(m.get_position()) if m is not None else default
+                     for m, default in zip(self._six_motors, self.DEFAULT_POS))
 
+    @util.depreciate
     def get_position_step(self) -> tuple[int]:
         """Return a tuple of all the motors' positions in steps. Defaults to
         0 for non-captured motors."""
         return tuple(int(m.get_position_step()[0]) if m is not None else 0
                      for m in self._six_motors)
 
+    @util.depreciate
     def get_position_microstep(self) -> tuple[int]:
-        """Return a tuple of all the motors' positions in steps. Defaults to
+        """Return a tuple of all the motors' positions' microsteps. Defaults to
         0 for non-captured motors."""
         return tuple(int(m.get_position_step()[1]) if m is not None else 0
                      for m in self._six_motors)
@@ -482,12 +496,15 @@ class SixAxisLaserController:
 
     async def to_zero(self):
         """Move all motors to their zero position."""
-        # TODO: This doesn't check if zero is out-of-bounds.
         _logger.debug(f'Moving all motors to zero.')
-        tasks = set()
-        for mot in self.motors:
-            tasks.add(mot.move_to(0))
-        await asyncio.gather(*tasks)
+        await self._to_pos(
+            x_um=0,
+            y_um=0,
+            z_um=0,
+            n_deg=0,
+            p_deg=0,
+            v_deg=0,
+        )
 
     # --- Toolpath Runner -----------------------------------------------------
     async def run_toolpath(
@@ -530,7 +547,7 @@ class SixAxisLaserController:
                 more info.
         """
         # --- Sanitize input ---
-        origin = np.array(origin)
+        origin = np.array(origin) - np.array(self.DEFAULT_POS)
         plot_args = plot_args or {}
 
         # --- Make async helper functions ---
@@ -564,7 +581,7 @@ class SixAxisLaserController:
             else:
                 await asyncio.sleep(lase_time_ms / 1000)
             toolpath.confirm()
-
+        '''
         async def ping():
             try:
                 async with aiohttp.ClientSession() as session:
@@ -578,7 +595,7 @@ class SixAxisLaserController:
                 raise NoInternetConnectionError(
                     'Cannot connect to Google, operation suspended. See '
                     'traceback for more details.')
-
+        '''
         # --- Check required motors ---
         self._check_captured(*toolpath.required_motors)
 
@@ -592,12 +609,13 @@ class SixAxisLaserController:
                 if not lower < relative_pos + origin[index] < upper:
                     raise motor.PositionOutOfBoundsError(
                         f'Motor {mot.name}, '
-                        f'Position {relative_pos + origin[index]:.2f}'
+                        f'Position {relative_pos + origin[index]:.2f} '
+                        f'not within ({lower}, {upper}).'
                     )
 
         # --- Run the toolpath ---
         instruction_task = None
-        connection_task = asyncio.create_task(ping())
+        #connection_task = asyncio.create_task(ping())
         for instruction in toolpath:
             display.clear_output(wait=True)
 
@@ -605,8 +623,8 @@ class SixAxisLaserController:
             # Do this before there's a risk of running any instructions
             # TODO: Perhaps, to save time, I should only await this before
             #  each lase, as that's the fire hazard step
-            await connection_task
-            connection_task = asyncio.create_task(ping())
+            #await connection_task
+            #connection_task = asyncio.create_task(ping())
 
             # --- Dispatch instruction task ---
             # This block should go first, as it takes the longest to run.
