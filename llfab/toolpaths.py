@@ -264,9 +264,20 @@ def path_sph_hex_grid(
     incs = np.degrees(incs)
     azis = np.degrees(azis)
 
-    points = [(inc, azi) for inc, azi in zip(incs, azis) if inc <= max_incline]
+    # --- Make azimuths increasing (to prevent going from 179 to -179) ---
+    prev_azi = azis[0]
+    clean_azis = [prev_azi]
+    for azi in azis[1:]:
+        rotations, offset = divmod(prev_azi, 360)
+        residue = np.asarray([azi - 360, azi, azi + 360]) + rotations * 360
+        mindex = np.argmin(np.abs(prev_azi - residue))
+        clean_azis.append(residue[mindex])
+        prev_azi = clean_azis[-1]
+    azis = clean_azis
 
     # --- Create instructions ---
+    points = [(inc, azi) for inc, azi in zip(incs, azis) if inc <= max_incline]
+
     for incline, azimuth, in points:
         yield In.GO_SPH, azimuth, -incline
         yield In.LASE
