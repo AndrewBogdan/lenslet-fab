@@ -10,7 +10,9 @@ import functools
 import itertools
 import math
 import re
+import time
 
+from IPython import display
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib import ticker
@@ -159,6 +161,29 @@ class _Toolpath(Iterator):
         return self._pos_num, len(self.positions) - 1
 
     # --- Plotting ------------------------------------------------------------
+    def preview(
+            self,
+            lase_time_ms: float = 500,
+
+            plot_type: Optional[str] = None,
+            plot_args: Optional[dict] = None,
+    ):
+        """TODO
+        Preview the toolpath, mimics the style of salc.run_toolpath.
+        """
+        plot_args = {} if plot_args is None else plot_args
+
+        pos_num = 0
+        for lase_num, _ in enumerate(self.lases):
+            self.plot(
+                kind=plot_type,
+                pos_num=pos_num,
+                lase_num=lase_num,
+                **plot_args)
+            plt.show()
+            display.clear_output(wait=True)
+            time.sleep(lase_time_ms / 1000.0)
+
     def plot(self, kind: Optional[str] = None, *args, **kwargs):
         """Plot the toolpath.
 
@@ -185,7 +210,9 @@ class _Toolpath(Iterator):
                 args_path=None,
                 args_lase=None,
                 args_start=None,
-                args_end=None):
+                args_end=None,
+                pos_num=None,
+                lase_num=None,):
         """Plot the toolpath in the Cartesian plane with X and Y.
 
         Args:
@@ -200,6 +227,10 @@ class _Toolpath(Iterator):
                 plt.scatter.
             args_end: Arguments for the end position marker, passed to
                 plt.scatter.
+            pos_num: Optional, specify the position number you want to plot at.
+                If not given, it will be the current position of the toolpath.
+            lase_num: Optional, specify the lase number you want to plot at.
+                If not given, it will be the current position of the toolpath.
 
         Returns:
             The axis ax, whichever was plotted on.
@@ -215,8 +246,14 @@ class _Toolpath(Iterator):
 
         # These represent the current state, and if we're finished, there's
         #  special behavior.
-        pos_num = self._pos_num if self._pos_num != len(self.positions) else -1
-        lase_num = self._lase_num if self._lase_num != len(self.lases) else -1
+        if pos_num is None:
+            pos_num = (
+                self._pos_num if self._pos_num != len(self.positions) else -1
+            )
+        if lase_num is None:
+            lase_num = (
+                self._lase_num if self._lase_num != len(self.lases) else -1
+            )
 
         pos_x, pos_y, _, _, _, _ = zip(*self.positions[pos_num:])
         lase_x, lase_y, _, _, _, _ = zip(*self.lases)
@@ -279,7 +316,6 @@ class _Toolpath(Iterator):
 
     def plot_sph(self, ax=None, *,
                  radius=1,
-                 lase_num=0,  # TODO: Temporary
 
                  # Plotting parameters
                  lase_colors=(
@@ -288,11 +324,19 @@ class _Toolpath(Iterator):
                  ),
                  args_lase=None,
                  args_surface=None,
+                 pos_num=None,
+                 lase_num=None,
                  ):
         """TODO"""
         # --- Manage optional arguments ---
         args_lase = args_lase or {}
         args_surface = args_surface or {}
+
+        # Get the lase number as the current state, if not specified.
+        if lase_num is None:
+            lase_num = (
+                self._lase_num if self._lase_num != len(self.lases) else -1
+            )
 
         # --- Make a plot of a hemisphere with radius ---
         if ax is None:

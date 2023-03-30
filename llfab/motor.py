@@ -6,9 +6,13 @@ from typing import TypeAlias, Optional, Tuple
 import asyncio
 import logging
 import math
+import warnings
 
-import pyximc
-from pyximc import lib as libximc
+try:
+    import pyximc
+    from pyximc import lib as libximc
+except FileNotFoundError:
+    warnings.warn('Cannot import XIMC, the file is likely misplaced.')
 
 from llfab import util
 
