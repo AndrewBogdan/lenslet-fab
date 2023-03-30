@@ -189,3 +189,88 @@ def path_xy_circle(
         angle += stride_angle
         yield from _lase_z_steps(z_steps)
     yield In.RETURN
+
+
+@harness.toolpath
+def path_sph_hex_grid(
+        radius: float = 1000.0,
+        pitch: tuple = (100.0, 115.47),
+        max_incline: float = 90.0,
+):
+    # --- Unpack inputs and validate ---
+    pitch_x, pitch_y = pitch
+
+    if radius < 0:
+        raise ValueError('Radius cannot be negative.')
+    if pitch_x < 0 or pitch_y < 0:
+        raise ValueError('Pitches cannot be negative.')
+
+    # --- Create grid of hexagons for polar projection ---
+    rel_pitch_x = (pitch_x / radius)
+    rel_pitch_y = (pitch_y / radius)
+    num_x = math.floor(4 / rel_pitch_x)
+    num_y = math.floor(4 / rel_pitch_y)
+
+    # Create a grid of hexagons one at a time
+    # TODO: this code could probably use some shortening
+    positions = []
+    pos_x, pos_y = (4 - rel_pitch_x) / 2, (4 - rel_pitch_y) / 2
+
+    direction = -1
+    for _ in range(num_x):
+        for _ in range(num_y):
+            positions.append((pos_x, pos_y))
+            # Move to the left or right in Y
+            pos_y += rel_pitch_y * direction
+        # Move down in X, back half of Y
+        pos_x += -rel_pitch_x
+        pos_y += rel_pitch_y / 2 * direction * -1
+        # Change direction
+        direction *= -1
+    x, y = zip(*positions)
+
+    # Adjust the grid so (0, 0) has a point
+    x = np.asarray(x)
+    y = np.asarray(y)
+    mindex = np.argmin(x ** 2 + y ** 2)
+    x = x - x[mindex]
+    y = y - y[mindex]
+
+    # --- Sort the points radially ---
+    pts = list(zip(x, y, x ** 2 + y ** 2, np.angle(x + 1j * y)))
+    pts = sorted(pts, key=lambda x: x[2])
+    sort = []
+    sort.append(pts.pop(0))
+    while len(pts) != 0:
+        ref_x, ref_y, ref_m, ref_a = sort[-1]
+
+        def hex_dist(p):
+            return (p[0] - ref_x) ** 2 + (p[1] - ref_y) ** 2
+
+        dists = [hex_dist(p) for p in pts]
+        mind = min(dists)
+        closest_mask = [abs(d - mind) < 1e-6 for d in dists]
+        closest = [p for ind, p in enumerate(pts) if closest_mask[ind]]
+        nex = min(closest, key=lambda p: p[2])
+        sort.append(nex)
+        pts.remove(nex)
+    x, y, _, _ = list(zip(*sort))
+
+    @np.vectorize
+    def norm_proj(x, y):
+        return np.sqrt(x ** 2 + y ** 2), np.angle(x + 1j * y)
+
+    incs, azis = norm_proj(x, y)
+    incs = np.degrees(incs)
+    azis = np.degrees(azis)
+
+    points = [(inc, azi) for inc, azi in zip(incs, azis) if inc <= max_incline]
+
+    # --- Create instructions ---
+    for incline, azimuth, in points:
+        yield In.GO_SPH, azimuth, -incline
+        yield In.LASE
+
+    yield In.GO, None, None, 0, None, None, None
+    yield In.FENCE
+    yield In.RETURN
