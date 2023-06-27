@@ -113,7 +113,7 @@ class _Toolpath(Iterator):
 
                 case (Inst.GO_SPH, *pos_sph_to):
                     pos_sph_to = np.array(pos_sph_to)
-                    pos_sph_to.resize((3, ))
+                    pos_sph_to.resize((4, ))
                     pos_to = np.array(sal.SALC.calc_spherical_pos(*pos_sph_to))
                     pos = pos_to.copy()
 
@@ -333,10 +333,8 @@ class _Toolpath(Iterator):
         args_surface = args_surface or {}
 
         # Get the lase number as the current state, if not specified.
-        if lase_num is None:
-            lase_num = (
-                self._lase_num if self._lase_num != len(self.lases) else -1
-            )
+        lase_num = self._lase_num if lase_num is None else lase_num
+        lase_num = len(self.lases) + lase_num if lase_num < 0 else lase_num
 
         # --- Make a plot of a hemisphere with radius ---
         if ax is None:
@@ -379,7 +377,7 @@ class _Toolpath(Iterator):
         lase_z = np.array(lase_z) / 1e6
 
         # --- Color-code the lases ---
-        lase_num = lase_num if lase_num != len(self.lases) else -1
+        lase_num = min(lase_num, len(self.lases) - 1)
         lc_first, lc_done, lc_current, lc_todo, lc_last = lase_colors
         lase_c = [lc_done] * lase_num + \
                  [lc_todo] * (len(self.lases) - lase_num)
@@ -410,6 +408,34 @@ class _Toolpath(Iterator):
         # ax.set_zlabel('Z')
 
         return ax
+
+    def plot_sph2(self, axes=None, *,
+                 radius=1,
+
+                 # Plotting parameters
+                 lase_colors=(
+                     # '#9BC53D', '#508484', '#7E52A0', '#4A4238', '#E63946',
+                     'green', 'yellowgreen', 'yellow', 'orange', 'orangered',
+                 ),
+                 args_lase=None,
+                 args_surface=None,
+                 pos_num=None,
+                 lase_num=None,
+                  ):
+        if axes is None:
+            fig = plt.figure(figsize=(12, 8))
+
+            ax1 = fig.add_subplot(1, 2, 1, projection='3d')
+            ax2 = fig.add_subplot(1, 2, 2, projection='polar')
+        else:
+            ax1, ax2 = axes
+
+        self.plot_sph(
+            ax=ax1
+        )
+        self.plot_td(
+            ax=ax2
+        )
 
     def __repr__(self):
         """Prints the positions and lases in a text table."""
