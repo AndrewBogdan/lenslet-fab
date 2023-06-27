@@ -118,7 +118,10 @@ class _Toolpath(Iterator):
                     pos = pos_to.copy()
 
                 case Inst.RETURN:
-                    pos = np.array(sal.SALC.DEFAULT_POS)
+                    home = np.array(sal.SALC.DEFAULT_POS)
+                    # Ignore the V position
+                    home[5] = pos[5]
+                    pos = home
                     record_position()
 
                 case Inst.FENCE:
@@ -333,10 +336,8 @@ class _Toolpath(Iterator):
         args_surface = args_surface or {}
 
         # Get the lase number as the current state, if not specified.
-        if lase_num is None:
-            lase_num = (
-                self._lase_num if self._lase_num != len(self.lases) else -1
-            )
+        lase_num = self._lase_num if lase_num is None else lase_num
+        lase_num = len(self.lases) + lase_num if lase_num < 0 else lase_num
 
         # --- Make a plot of a hemisphere with radius ---
         if ax is None:
@@ -379,7 +380,7 @@ class _Toolpath(Iterator):
         lase_z = np.array(lase_z) / 1e6
 
         # --- Color-code the lases ---
-        lase_num = lase_num if lase_num != len(self.lases) else -1
+        lase_num = min(lase_num, len(self.lases) - 1)
         lc_first, lc_done, lc_current, lc_todo, lc_last = lase_colors
         lase_c = [lc_done] * lase_num + \
                  [lc_todo] * (len(self.lases) - lase_num)
