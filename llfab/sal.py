@@ -261,8 +261,8 @@ class SixAxisLaserController:
         # v_rad = math.radians(v_deg)
 
         return (
-            x_um - cls.P_RADIUS_UM * math.sin(p_rad) * math.sin(n_rad),
-            y_um + cls.P_RADIUS_UM * math.sin(p_rad) * math.cos(n_rad),
+            x_um + cls.P_RADIUS_UM * math.sin(p_rad) * math.cos(n_rad),
+            y_um + cls.P_RADIUS_UM * math.sin(p_rad) * math.sin(n_rad),
             z_um + cls.P_RADIUS_UM * (1 - math.cos(p_rad)),
         )
 
@@ -271,23 +271,24 @@ class SixAxisLaserController:
             cls,
             azimuth: float,
             incline: float,
+            heading: float,
             height: float,
     ):
         """Gets the 6-coordinates corresponding to a given spherical
         coordinate system."""
         # The angles are independent, and we calculate the xyz.
-        n_deg = cls.N_DEFAULT_POS
-        p_deg = incline
+        n_deg = heading
+        p_deg = -incline
         v_deg = azimuth
 
         # Get radians for math.sin & math.cos functions
         n_rad = math.radians(n_deg)
-        p_rad = math.radians(incline)
+        p_rad = math.radians(p_deg)
         # v_rad = math.radians(azimuth)
 
         # Calculate where each stepper should go to
-        x_um = (cls.P_RADIUS_UM * math.sin(p_rad) * math.sin(n_rad))
-        y_um = (-cls.P_RADIUS_UM * math.sin(p_rad) * math.cos(n_rad))
+        x_um = (-cls.P_RADIUS_UM * math.sin(p_rad) * math.cos(n_rad))
+        y_um = (-cls.P_RADIUS_UM * math.sin(p_rad) * math.sin(n_rad))
         z_um = (height - cls.P_RADIUS_UM * (1 - math.cos(p_rad)))
 
         return x_um, y_um, z_um, n_deg, p_deg, v_deg

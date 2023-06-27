@@ -113,7 +113,7 @@ class _Toolpath(Iterator):
 
                 case (Inst.GO_SPH, *pos_sph_to):
                     pos_sph_to = np.array(pos_sph_to)
-                    pos_sph_to.resize((3, ))
+                    pos_sph_to.resize((4, ))
                     pos_to = np.array(sal.SALC.calc_spherical_pos(*pos_sph_to))
                     pos = pos_to.copy()
 
@@ -411,6 +411,34 @@ class _Toolpath(Iterator):
         # ax.set_zlabel('Z')
 
         return ax
+
+    def plot_sph2(self, axes=None, *,
+                 radius=1,
+
+                 # Plotting parameters
+                 lase_colors=(
+                     # '#9BC53D', '#508484', '#7E52A0', '#4A4238', '#E63946',
+                     'green', 'yellowgreen', 'yellow', 'orange', 'orangered',
+                 ),
+                 args_lase=None,
+                 args_surface=None,
+                 pos_num=None,
+                 lase_num=None,
+                  ):
+        if axes is None:
+            fig = plt.figure(figsize=(12, 8))
+
+            ax1 = fig.add_subplot(1, 2, 1, projection='3d')
+            ax2 = fig.add_subplot(1, 2, 2, projection='polar')
+        else:
+            ax1, ax2 = axes
+
+        self.plot_sph(
+            ax=ax1
+        )
+        self.plot_td(
+            ax=ax2
+        )
 
     def __repr__(self):
         """Prints the positions and lases in a text table."""
