@@ -9,10 +9,10 @@ serial:
 unit:
   x: [0.1, 'um']
   y: [0.1, 'um']
-  z: [0.39940625, 'um']
-  n: [99.88, 'deg']
-  p: [-100.4, 'deg']
-  v: [-99.87, 'deg']
+  z: [0.4, 'um']  # [0.39940625, 'um']
+  n: [100, 'deg']  # [99.88, 'deg']
+  p: [-100, 'deg']  # [-100.4, 'deg']
+  v: [-100, 'deg']  # [-99.87, 'deg']
 
 # Note: anything less than 10 ms is going to slow down the controller!
 refresh_interval_ms:
@@ -25,7 +25,7 @@ refresh_interval_ms:
 
 geometry:
   # Compare the height of the origin at p=0 and 90 deg.
-  p_radius_um: -10.75e3
+  p_radius_um: -12.8e3
 
   # Define z=0 when the v-bed is 105 mm off of the xy bed
   # z_zero_um: 0 # 105e3
@@ -39,12 +39,12 @@ geometry:
     x: 0
     y: 0
     z: 0
-    n: -90  # deg
+    n: 0  # deg
     p: 0
     v: 0
 
   # Note: 0deg in N is has the machinery to the -x of the bed:
-  #  0 deg:      90 deg:     180 deg:     -90 deg:
+  #  -90 deg:      0 deg:     90 deg:     180 deg:
   #   ==           (0)           ==        |||||
   #   ==--0         |         0--==          |
   #   ==          |||||          ==         (0)

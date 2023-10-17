@@ -329,7 +329,7 @@ class MotorController:
         )
         if result != pyximc.Result.Ok:
             _logger.debug(
-                f'Failed to retrieve boundary settings for device (...), '
+                f'Failed to retrieve boundary settings for motor {self.name}, '
                 f'error: {result}')
 
         border_flags = edges_settings_struct.BorderFlags

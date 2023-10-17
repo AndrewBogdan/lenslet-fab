@@ -9,9 +9,9 @@ import enum
 import datetime
 import logging
 import math
-import time
+import os
+import sys
 
-import aiohttp
 import matplotlib.pyplot as plt
 import numpy as np
 from IPython import display
@@ -24,8 +24,10 @@ from llfab import util
 
 
 _logger = logging.getLogger(__name__)
+_logger_lases = util.get_lase_logger(__name__)
 
 
+# --- Classes -----------------------------------------------------------------
 class Motors(enum.Enum):
     X = 'x'
     Y = 'y'
@@ -370,6 +372,11 @@ class SixAxisLaserController:
         return tuple(int(m.get_position_step()[1]) if m is not None else 0
                      for m in self._six_motors)
 
+    def str_position(self, fmt: str = 'print') -> str:
+        """Return a string representation of the position, forwarded from
+        self.get_position()."""
+        return util.fmt_position(self.get_position(), fmt=fmt)
+
     # --- Configuration (Setters) ---------------------------------------------
     def set_zero(self):
         """Set the current position as zero."""
@@ -446,6 +453,7 @@ class SixAxisLaserController:
             self,
             azimuth: float,
             incline: float,
+            heading: float,
             height: float,
     ):
         """Moves the 6-axis to the given spherical coordinates, in degrees.
@@ -453,7 +461,7 @@ class SixAxisLaserController:
         self._check_captured(Motors.X, Motors.Y, Motors.Z, Motors.P, Motors.V)
 
         x_um, y_um, z_um, n_deg, p_deg, v_deg = self.calc_spherical_pos(
-            azimuth=azimuth, incline=incline, height=height,
+            azimuth=azimuth, incline=incline, heading=heading, height=height,
         )
 
         o_pos = self.calc_origin(x_um, y_um, z_um, n_deg, p_deg, v_deg)
@@ -464,7 +472,7 @@ class SixAxisLaserController:
             x_um=x_um,
             y_um=y_um,
             z_um=z_um,
-            n_deg=None,
+            n_deg=n_deg,
             p_deg=p_deg,
             v_deg=v_deg,
             rail=False,
@@ -547,6 +555,9 @@ class SixAxisLaserController:
             plot_args: dict, arguments for toolpath.plot. See harness.py for
                 more info.
         """
+        _logger_lases.info(f'Running Toolpath...')
+        _logger_lases.info(f'Lase?, Position')
+
         # --- Sanitize input ---
         origin = np.array(origin) - np.array(self.DEFAULT_POS)
         plot_args = plot_args or {}
@@ -570,11 +581,12 @@ class SixAxisLaserController:
             except asyncio.TimeoutError:
                 raise MovementTimeoutError(
                     f'Movement timed out, at position '
-                    f'{self.get_position()}, not {to_pos}.)'
+                    f'{self.str_position()}, not {to_pos}.)'
                 )
 
         async def lasing():
-            print(f'Lasing at {self.get_position()}.')
+            print(f'Lasing at {self.str_position()}.')
+            _logger_lases.info(f'{do_lase}, {self.str_position(fmt="csv")}')
             if do_lase:
                 with self.gas():
                     self.lase()
