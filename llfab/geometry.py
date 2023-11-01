@@ -391,7 +391,7 @@ class LaseGeometry(Sequence):
 
         headings = []
         for lase_index, lase_xyz in enumerate(self.lases):
-            if lase_index % min(1000, len(self.lases) // 5) == 0:
+            if lase_index % min(1000, len(self.lases) // 5 + 1) == 0:
                 _logger.info(f'\t{100 * lase_index / len(self.lases):.2f}% complete...')
 
             lase = self.sph(lase_index)
@@ -464,10 +464,10 @@ class LaseGeometry(Sequence):
                         f'now undefined.')
         self.headings = None
         self.corners = None
+        self.pentagons = list(range(np.count_nonzero(mask[:12])))
+        self.hexagons = list(set(range(len(self.lases))) - set(self.pentagons))
         self.clear_caches('all')
         _logger.info('Saving pentagons and hexagons.')
-        self.pentagons = set()
-        self.hexagons = set(range(len(self.lases)))
 
     # --- Lase Orderings ------------------------------------------------------
     def order_random_walk(self, start_idx: int) -> List[int]:
@@ -476,7 +476,7 @@ class LaseGeometry(Sequence):
         point is picks a random location to go to next. It does this until
         it has lased everything."""
         # Logging information, in the l_ namespace
-        l_log_every = min(1000, len(self.lases) // 5)  # Log every N steps
+        l_log_every = min(1000, len(self.lases) // 5 + 1)  # Log every N steps
         l_num_complete = -1
 
         # Set up two lists which will always sum to everything we lase.
@@ -522,7 +522,7 @@ class LaseGeometry(Sequence):
         """An ordering of the geometry that starts at the lase closest to
         start_coords and spirals outwards. start_coords defaults to north."""
         # Logging information, in the l_ namespace
-        l_log_every = min(1000, len(self.lases) // 5)  # Log every N steps
+        l_log_every = min(1000, len(self.lases) // 5 + 1)  # Log every N steps
         l_num_complete = -1
 
         ordering = []
