@@ -176,16 +176,25 @@ class _Toolpath(Iterator):
         """
         plot_args = {} if plot_args is None else plot_args
 
-        pos_num = 0
-        for lase_num, _ in enumerate(self.lases):
+        pos_num = lase_num = 0
+        try:
+            for lase_num, _ in enumerate(self.lases):
+                self.plot(
+                    kind=plot_type,
+                    pos_num=pos_num,
+                    lase_num=lase_num,
+                    **plot_args
+                )
+                plt.show()
+                display.clear_output(wait=True)
+                time.sleep(lase_time_ms / 1000.0)
+        except KeyboardInterrupt:
             self.plot(
                 kind=plot_type,
                 pos_num=pos_num,
                 lase_num=lase_num,
-                **plot_args)
-            plt.show()
-            display.clear_output(wait=True)
-            time.sleep(lase_time_ms / 1000.0)
+                **plot_args
+            )
 
     def plot(self, kind: Optional[str] = None, *args, **kwargs):
         """Plot the toolpath.
