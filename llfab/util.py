@@ -37,12 +37,14 @@ _formatter_fileout = logging.Formatter('%(asctime)s, %(message)s')
 _handler_laselog = logging.FileHandler(LOGFILE_LASES)
 _handler_laselog.setFormatter(_formatter_fileout)
 
+
 def get_lase_logger(name: str):
     """Get a logger to log lases and related output. Pass it __name__."""
     logger = logging.getLogger(name + '.lases')
     logger.addHandler(_handler_laselog)
     logger.propagate = False
     return logger
+
 
 # --- Other Utility Functions -------------------------------------------------
 def depreciate(func):
