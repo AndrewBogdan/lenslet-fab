@@ -19,7 +19,8 @@ import numpy as np
 import pyvista as pv
 import scipy
 
-from llfab import geodesic
+from llfab import geodesic, harness, toolpaths
+from llfab.harness import Inst as In
 
 
 # Type Aliases
@@ -328,85 +329,6 @@ class LaseGeometry(Sequence):
             zip(np.real(complex_points), np.imag(complex_points))
         ))
 
-    # --- Lase Orderings --------------------------------------------------
-    def order_random_walk(self, start_idx: int) -> List[int]:
-        """An ordering of the geometry that starts at lase start_idx, and picks
-        random neighbors to lase next until it runs out of neighbors, at which
-        point is picks a random location to go to next. It does this until
-        it has lased everything."""
-        # Logging information, in the l_ namespace
-        l_log_every = min(1000, len(self.lases) // 5)  # Log every N steps
-        l_num_complete = -1
-
-        # Set up two lists which will always sum to everything we lase.
-        ordering = []
-        remaining = list(range(len(self)))
-
-        # We shuffle the remaining so that when we run out of neighbors, we
-        #  pick a random one.
-        random.shuffle(remaining)
-
-        # Manually do one iteration to start
-        current_idx = start_idx
-        remaining.remove(current_idx)
-        ordering.append(current_idx)
-        while remaining:
-            # Logging information
-            # We check if len(ordering) has decreased mod l_log_every. If so,
-            #  that means over the last iteration, we passed a threshold.
-            if len(ordering) % l_log_every < l_num_complete % l_log_every:
-                l_percent_complete = 100 * len(ordering) / len(self.lases)
-                _logger.info(f'{l_percent_complete:.2f}% complete...')
-            l_num_complete = len(ordering)
-
-            # Find neighbors that we haven't visited yet
-            # It's cached, so we're not wasting time
-            neighbors = list(self.neighbors_of(current_idx))
-            neighbors = list(set(neighbors) - set(ordering))
-
-            if neighbors:
-                # Pick a random remaining neighbor
-                random.shuffle(neighbors)
-                next_idx = neighbors[0]
-            else:
-                # Otherwise, pick a random spot
-                next_idx = remaining[0]
-
-            remaining.remove(next_idx)
-            ordering.append(next_idx)
-            current_idx = next_idx
-        return ordering
-
-    def order_spiral(self, start_coords: XYZPoint = (0, 0, 1)) -> List[int]:
-        """An ordering of the geometry that starts at the lase closest to
-        start_coords and spirals outwards. start_coords defaults to north."""
-        # Logging information, in the l_ namespace
-        l_log_every = min(1000, len(self.lases) // 5)  # Log every N steps
-        l_num_complete = -1
-
-        ordering = []
-        start_idx = np.argmin(np.sum((self.lases - start_coords) ** 2, axis=1))
-        level = 0
-        # Check if we're finished by seeing if there are any more neighbors
-        while self.neighbors_of(start_idx, distance=level):
-            # Logging information
-            # We check if len(ordering) has decreased mod l_log_every. If so,
-            #  that means over the last iteration, we passed a threshold.
-            if len(ordering) % l_log_every < l_num_complete % l_log_every:
-                l_percent_complete = 100 * len(ordering) / len(self.lases)
-                _logger.info(f'{l_percent_complete:.2f}% complete...')
-            l_num_complete = len(ordering)
-
-            # It's cached, so we're not wasting time
-            neighbors = list(self.neighbors_of(start_idx, distance=level))
-
-            # Sort the neighbors by azimuth
-            ordering.extend(
-                sorted(neighbors, key=lambda idx: self.azimuths[idx])
-            )
-            level += 1
-        return ordering
-
     # --- Stateful Geometric Calculations -------------------------------------
     def bound_headings(self, bounds):
         """Makes sure that abs(headings) is within bounds, and changes it
@@ -522,6 +444,155 @@ class LaseGeometry(Sequence):
         _logger.info('Saving pentagons and hexagons.')
         self.pentagons = set()
         self.hexagons = set(range(len(self.lases)))
+
+    # --- Lase Orderings ------------------------------------------------------
+    def order_random_walk(self, start_idx: int) -> List[int]:
+        """An ordering of the geometry that starts at lase start_idx, and picks
+        random neighbors to lase next until it runs out of neighbors, at which
+        point is picks a random location to go to next. It does this until
+        it has lased everything."""
+        # Logging information, in the l_ namespace
+        l_log_every = min(1000, len(self.lases) // 5)  # Log every N steps
+        l_num_complete = -1
+
+        # Set up two lists which will always sum to everything we lase.
+        ordering = []
+        remaining = list(range(len(self)))
+
+        # We shuffle the remaining so that when we run out of neighbors, we
+        #  pick a random one.
+        random.shuffle(remaining)
+
+        # Manually do one iteration to start
+        current_idx = start_idx
+        remaining.remove(current_idx)
+        ordering.append(current_idx)
+        while remaining:
+            # Logging information
+            # We check if len(ordering) has decreased mod l_log_every. If so,
+            #  that means over the last iteration, we passed a threshold.
+            if len(ordering) % l_log_every < l_num_complete % l_log_every:
+                l_percent_complete = 100 * len(ordering) / len(self.lases)
+                _logger.info(f'{l_percent_complete:.2f}% complete...')
+            l_num_complete = len(ordering)
+
+            # Find neighbors that we haven't visited yet
+            # It's cached, so we're not wasting time
+            neighbors = list(self.neighbors_of(current_idx))
+            neighbors = list(set(neighbors) - set(ordering))
+
+            if neighbors:
+                # Pick a random remaining neighbor
+                random.shuffle(neighbors)
+                next_idx = neighbors[0]
+            else:
+                # Otherwise, pick a random spot
+                next_idx = remaining[0]
+
+            remaining.remove(next_idx)
+            ordering.append(next_idx)
+            current_idx = next_idx
+        return ordering
+
+    def order_spiral(self, start_coords: XYZPoint = (0, 0, 1)) -> List[int]:
+        """An ordering of the geometry that starts at the lase closest to
+        start_coords and spirals outwards. start_coords defaults to north."""
+        # Logging information, in the l_ namespace
+        l_log_every = min(1000, len(self.lases) // 5)  # Log every N steps
+        l_num_complete = -1
+
+        ordering = []
+        start_idx = np.argmin(np.sum((self.lases - start_coords) ** 2, axis=1))
+        level = 0
+        # Check if we're finished by seeing if there are any more neighbors
+        while self.neighbors_of(start_idx, distance=level):
+            # Logging information
+            # We check if len(ordering) has decreased mod l_log_every. If so,
+            #  that means over the last iteration, we passed a threshold.
+            if len(ordering) % l_log_every < l_num_complete % l_log_every:
+                l_percent_complete = 100 * len(ordering) / len(self.lases)
+                _logger.info(f'{l_percent_complete:.2f}% complete...')
+            l_num_complete = len(ordering)
+
+            # It's cached, so we're not wasting time
+            neighbors = list(self.neighbors_of(start_idx, distance=level))
+
+            # Sort the neighbors by azimuth
+            ordering.extend(
+                sorted(neighbors, key=lambda idx: self.azimuths[idx])
+            )
+            level += 1
+        return ordering
+
+    # --- Toolpaths -----------------------------------------------------------
+    @harness.toolpath
+    def toolpath(self, order='spiral', fence_at=360):
+        """A toolpath for the LensGeometry.
+
+        Args:
+            order: The order in which to lase everything. Current options are
+                'spiral' and 'random'.
+            fence_at: The degrees at which, if N is moving more than it, it
+                should insert fence instructions to break up the movement,
+                hopefully keeping from bumping anything.
+        """
+        # --- Digest/calculate the ordering -----------------------------------
+        if isinstance(order, str):
+            match order:
+                case 'spiral':
+                    ordering = self.order_spiral()
+                case 'random':
+                    ordering = self.order_random_walk()
+                case _:
+                    raise ValueError(f'Invalid ordering {order} supplied!')
+        else:
+            ordering = order
+
+        # --- Calculate the coordinates to Lase at ----------------------------
+        lase_coords = np.asarray(list(zip(
+            self.inclines[ordering],
+            self.azimuths[ordering],
+            self.headings[ordering],
+        )))
+        lase_coords = np.degrees(lase_coords)
+
+        # --- Toolpath --------------------------------------------------------
+        yield In.FENCE
+        incline_prev, azimuth_prev, heading_prev = (0, 0, 0)
+        for lase_num, (incline, azimuth, heading) in enumerate(lase_coords):
+            # --- Adjust azimuths to minimize movement ---
+            azi_offsets = np.array(
+                ((azimuth_prev // 360), (azimuth_prev // 360 + 1))) * 360
+            azimuth = min(azi_offsets + azimuth,
+                          key=lambda x: abs(x - azimuth_prev))
+
+            # --- Interpolate large heading movements ---
+            num_steps = int(abs(heading - heading_prev) // fence_at) + 1
+
+            inclines = np.linspace(incline_prev, incline, num_steps,
+                                   endpoint=False)
+            azimuths = np.linspace(azimuth_prev, azimuth, num_steps,
+                                   endpoint=False)
+            headings = np.linspace(heading_prev, heading, num_steps,
+                                   endpoint=False)
+
+            for (incline_small, azimuth_small, heading_small) in zip(inclines,
+                                                                     azimuths,
+                                                                     headings):
+                yield In.GO_SPH, azimuth_small, incline_small, heading_small
+                yield In.FENCE
+
+            # --- Move to final position & lase ---
+            yield In.GO_SPH, azimuth, incline, heading
+            yield In.LASE
+            incline_prev, azimuth_prev, heading_prev = (
+            incline, azimuth, heading)
+
+    def toolpath_project_to_xy(self):
+        """A toolpath which lases in XY the projection given by
+        project_sph_to_xy. This function is not meant for big lases, and
+        doesn't allow you to pick the order you lase in."""
+        return toolpaths.path_xy_points(self.project_sph_to_xy())
 
     # --- Plotting ------------------------------------------------------------
     def plot(
