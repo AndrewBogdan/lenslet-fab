@@ -1,14 +1,15 @@
 """Tools for geometric manipulation and creation of the lenslet geometry."""
 
 # --- Libraries ---
-from typing import TypeAlias, Union
+from typing import List, Tuple, TypeAlias, Union
 import collections
 import copy
-import time
 import functools
 import logging
 import math
 import numbers
+import random
+import time
 
 from typing import TypeVar
 from collections.abc import Collection, Sequence
@@ -23,6 +24,7 @@ from llfab import geodesic
 
 # Type Aliases
 SphPoint = TypeVar('SphPoint')
+XYZPoint = Tuple[float, float, float]
 PlotArgs: TypeAlias = Union[bool, dict]
 
 # Logger
@@ -325,6 +327,85 @@ class LaseGeometry(Sequence):
         return np.asarray(list(
             zip(np.real(complex_points), np.imag(complex_points))
         ))
+
+    # --- Lase Orderings --------------------------------------------------
+    def order_random_walk(self, start_idx: int) -> List[int]:
+        """An ordering of the geometry that starts at lase start_idx, and picks
+        random neighbors to lase next until it runs out of neighbors, at which
+        point is picks a random location to go to next. It does this until
+        it has lased everything."""
+        # Logging information, in the l_ namespace
+        l_log_every = min(1000, len(self.lases) // 5)  # Log every N steps
+        l_num_complete = -1
+
+        # Set up two lists which will always sum to everything we lase.
+        ordering = []
+        remaining = list(range(len(self)))
+
+        # We shuffle the remaining so that when we run out of neighbors, we
+        #  pick a random one.
+        random.shuffle(remaining)
+
+        # Manually do one iteration to start
+        current_idx = start_idx
+        remaining.remove(current_idx)
+        ordering.append(current_idx)
+        while remaining:
+            # Logging information
+            # We check if len(ordering) has decreased mod l_log_every. If so,
+            #  that means over the last iteration, we passed a threshold.
+            if len(ordering) % l_log_every < l_num_complete % l_log_every:
+                l_percent_complete = 100 * len(ordering) / len(self.lases)
+                _logger.info(f'{l_percent_complete:.2f}% complete...')
+            l_num_complete = len(ordering)
+
+            # Find neighbors that we haven't visited yet
+            # It's cached, so we're not wasting time
+            neighbors = list(self.neighbors_of(current_idx))
+            neighbors = list(set(neighbors) - set(ordering))
+
+            if neighbors:
+                # Pick a random remaining neighbor
+                random.shuffle(neighbors)
+                next_idx = neighbors[0]
+            else:
+                # Otherwise, pick a random spot
+                next_idx = remaining[0]
+
+            remaining.remove(next_idx)
+            ordering.append(next_idx)
+            current_idx = next_idx
+        return ordering
+
+    def order_spiral(self, start_coords: XYZPoint = (0, 0, 1)) -> List[int]:
+        """An ordering of the geometry that starts at the lase closest to
+        start_coords and spirals outwards. start_coords defaults to north."""
+        # Logging information, in the l_ namespace
+        l_log_every = min(1000, len(self.lases) // 5)  # Log every N steps
+        l_num_complete = -1
+
+        ordering = []
+        start_idx = np.argmin(np.sum((self.lases - start_coords) ** 2, axis=1))
+        level = 0
+        # Check if we're finished by seeing if there are any more neighbors
+        while self.neighbors_of(start_idx, distance=level):
+            # Logging information
+            # We check if len(ordering) has decreased mod l_log_every. If so,
+            #  that means over the last iteration, we passed a threshold.
+            if len(ordering) % l_log_every < l_num_complete % l_log_every:
+                l_percent_complete = 100 * len(ordering) / len(self.lases)
+                _logger.info(f'{l_percent_complete:.2f}% complete...')
+            l_num_complete = len(ordering)
+
+            # It's cached, so we're not wasting time
+            neighbors = list(self.neighbors_of(start_idx, distance=level))
+
+            # Sort the neighbors by azimuth
+            ordering.extend(
+                sorted(neighbors, key=lambda idx: self.azimuths[idx])
+            )
+            level += 1
+        return ordering
 
     # --- Stateful Geometric Calculations -------------------------------------
     def bound_headings(self, bounds):
