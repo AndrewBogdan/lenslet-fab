@@ -11,10 +11,11 @@ import math
 import numbers
 
 from typing import TypeVar
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from numbers import Real
 
 import numpy as np
+import pyvista as pv
 import scipy
 
 from llfab import geodesic
@@ -27,6 +28,7 @@ PlotArgs: TypeAlias = Union[bool, dict]
 # Logger
 _logger = logging.getLogger(__name__)
 
+
 # --- Classes -----------------------------------------------------------------
 class Radian(float, numbers.Real):
     """A Radian class which kees radians in the range +pi, -pi."""
@@ -37,6 +39,7 @@ class Radian(float, numbers.Real):
 
     # def __abs__(self):
     #     return min(float.__abs__(self), float.__abs__(2*np.pi - self))
+
 
 class SphPoint(collections.namedtuple('_SphPoint', ['incline', 'azimuth'])):
     """A point on a unit sphere."""
@@ -143,6 +146,7 @@ class SphPoint(collections.namedtuple('_SphPoint', ['incline', 'azimuth'])):
         return f'{self.__class__.__name__}' \
                f'(incline={self.incline:.3f}, azimuth={self.azimuth:.3f})'
 
+
 class LaseGeometry(Sequence):
     """A class which represents a collection of lases, with utilities for editing and optimizing the geometry.
     It is a sequence, but the order does not represent toolpath order."""
@@ -158,58 +162,26 @@ class LaseGeometry(Sequence):
 
         self._n_gons = {}
 
-    def clear_caches(self):
-        _logger.debug(f'Clearing caches...')
-        self.edges_of.cache_clear()
-        self.neighborhood_of.cache_clear()
-        self.neighbors_of.cache_clear()
-        self.degree_of.cache_clear()
-        self.n_gons.cache_clear()
-        self.get_edge_indices_map.cache_clear()
-
-    def set_zenith(self, coords):
-        _logger.warning(f'Using inefficient method '
-                        f'{self.__class__.__name__}.set_zenith.')
-        zenith_sph = SphPoint.from_xyz(*coords)
-        for lase_idx, lase in enumerate(self.lases):
-            lase_sph = SphPoint.from_xyz(*lase)
-            self.lases[lase_idx] = lase_sph.with_pole(zenith_sph).xyz
-
-        _logger.warning(f'Zenith reset, headings and corners are now undefined.')
-        self.headings = None,
-        self.corners = None,
-
-    def slice_in_half(self, cutoff=np.radians(85), drop_pentagons=True):
-        """Slice the geometry in half, keeping the top half."""
-        _logger.warning(f'Using inefficient method '
-                        f'{self.__class__.__name__}.slice_in_half.')
-
-        num_lases = len(self.lases)
-        inclines = np.array([SphPoint.from_xyz(*lase).incline
-                             for lase in self.lases])
-
-        cutoff_mask = inclines < cutoff
-        penta_mask = np.array([True] * num_lases)
-        if drop_pentagons: penta_mask[self.pentagons] = False
-
-        mask = cutoff_mask & penta_mask
-        mask_indices = np.arange(num_lases)[mask]
-
-        lookup = lambda idx: np.where(mask_indices == idx)[0][0]
-
-        self.lases = self.lases[mask_indices]
-        self.edges = np.array([
-            (lookup(start), lookup(end)) for start, end in self.edges
-            if start in mask_indices and end in mask_indices
-        ])
-        _logger.warning(f'Changed lase indexing, headings and corners are '
-                        f'now undefined.')
-        self.headings = None
-        self.corners = None
-        self.clear_caches()
-        _logger.info('Saving pentagons and hexagons.')
-        self.pentagons = set()
-        self.hexagons = set(range(len(self.lases)))
+    def clear_caches(self, kind='all'):
+        """Clear the caches, optionally picking a subset of caches to clear.
+        You can provide one of or a list of:
+        - 'all': Clear all caches.
+        - 'graph': Clear the caches related to the graph representation of the
+            geometry. Clear this when you add or remove lases.
+        - 'vector': Clear the caches related to the actual position of lases on
+            the sphere. Clear these if you change the location of a lase or
+            rotate the geometry."""
+        if not isinstance(kind, Collection): kind = (kind, )
+        _logger.debug(f'Clearing {kind} caches...')
+        if 'all' in kind or 'vector' in kind or 'graph' in kind:
+            self.sph.cache_clear()
+        if 'all' in kind or 'graph' in kind:
+            self.edges_of.cache_clear()
+            self.neighborhood_of.cache_clear()
+            self.neighbors_of.cache_clear()
+            self.degree_of.cache_clear()
+            self.n_gons.cache_clear()
+            self.get_edge_indices_map.cache_clear()
 
     # --- Utility -------------------------------------------------------------
     #  Graph theoretic tools
@@ -339,7 +311,34 @@ class LaseGeometry(Sequence):
 
         return dict(edge_lookup)
 
-    # --- Geometric Calculations ----------------------------------------------
+    @functools.lru_cache(maxsize=None)
+    def sph(self, index):
+        return SphPoint.from_xyz(*self.lases[index])
+
+    # --- Stateless Geometric Calculations / Optimization Routines ------------
+
+    # --- Stateful Geometric Calculations -------------------------------------
+    def bound_headings(self, bounds):
+        """Makes sure that abs(headings) is within bounds, and changes it
+        if necessary."""
+        mask = abs(self.headings) > bounds
+        self.headings[mask] = bounds[mask] * np.sign(self.headings[mask])
+        return self.headings
+
+    def make_corners_hexagonal(self, hex_diameter_long: float):
+        """Make the corners, assuming regular polygonal lases."""
+        time_start = time.time()
+        _logger.debug(f'Making hexagonal corners...')
+        if self.lases is None: raise ValueError('Lases undefined!')
+        if self.headings is None: raise ValueError('Headings undefined!')
+
+        arc_radius = np.arcsin(hex_diameter_long / self.lens_diameter)
+        self.corners = _make_corners_hexagonal(self.lases, self.headings, arc_radius)
+
+        _logger.debug(f'Done! Time elapsed: '
+                      f'{(time.time() - time_start) * 1e3:.2f} ms')
+        return self.corners
+
     def make_lases_geodesic(self, a_val, b_val):
         """Make a LaseGeomtry where the lases are at the vertices of a geodesic sphere."""
         _logger.info(f'Making Geodesic Sphere GS({a_val}, {b_val}).')
@@ -359,12 +358,12 @@ class LaseGeometry(Sequence):
             if lase_index % min(1000, len(self.lases) // 5) == 0:
                 _logger.info(f'\t{100 * lase_index / len(self.lases):.2f}% complete...')
 
-            lase = SphPoint.from_xyz(*lase_xyz)
+            lase = self.sph(lase_index)
             lase_headings = []
 
             # Get the headings from each neighbor
             for neighbor_index in self.neighbors_of(lase_index):
-                neighbor = SphPoint.from_xyz(*self.lases[neighbor_index])
+                neighbor = self.sph(neighbor_index)
                 lase_headings.append(lase.heading_to(neighbor))
 
             # Pick the one that's closest to North
@@ -390,26 +389,49 @@ class LaseGeometry(Sequence):
         self.headings = np.array(minimized_headings)
         return self.headings
 
-    def bound_headings(self, bounds):
-        """Makes sure that abs(headings) is within bounds, and changes it
-        if necessary."""
-        mask = abs(self.headings) > bounds
-        self.headings[mask] = bounds[mask] * np.sign(self.headings[mask])
-        return self.headings
+    def set_zenith(self, coords):
+        """Rotate the geometry so the zenith is at a specific location."""
+        _logger.warning(f'Using inefficient method '
+                        f'{self.__class__.__name__}.set_zenith.')
+        zenith_sph = SphPoint.from_xyz(*coords)
+        for lase_idx in range(len(self.lases)):
+            lase_sph = self.sph(lase_idx)
+            self.lases[lase_idx] = lase_sph.with_pole(zenith_sph).xyz
 
-    def make_corners_hexagonal(self, hex_diameter_long: float):
-        """Make the corners, assuming regular polygonal lases."""
-        time_start = time.time()
-        _logger.debug(f'Making hexagonal corners...')
-        if self.lases is None: raise ValueError('Lases undefined!')
-        if self.headings is None: raise ValueError('Headings undefined!')
+        _logger.warning(f'Zenith reset, headings and corners are now undefined.')
+        self.headings = None
+        self.corners = None
+        self.clear_caches('vector')
 
-        arc_radius = np.arcsin(hex_diameter_long / self.lens_diameter)
-        self.corners = _make_corners_hexagonal(self.lases, self.headings, arc_radius)
+    def slice_in_half(self, cutoff=np.radians(85), drop_pentagons=True):
+        """Slice the geometry in half, keeping the top half."""
+        _logger.warning(f'Using inefficient method '
+                        f'{self.__class__.__name__}.slice_in_half.')
 
-        _logger.debug(f'Done! Time elapsed: '
-                      f'{(time.time() - time_start) * 1e3:.2f} ms')
-        return self.corners
+        num_lases = len(self.lases)
+
+        cutoff_mask = self.inclines < cutoff
+        penta_mask = np.array([True] * num_lases)
+        if drop_pentagons: penta_mask[self.pentagons] = False
+
+        mask = cutoff_mask & penta_mask
+        mask_indices = np.arange(num_lases)[mask]
+
+        lookup = lambda idx: np.where(mask_indices == idx)[0][0]
+
+        self.lases = self.lases[mask_indices]
+        self.edges = np.array([
+            (lookup(start), lookup(end)) for start, end in self.edges
+            if start in mask_indices and end in mask_indices
+        ])
+        _logger.warning(f'Changed lase indexing, headings and corners are '
+                        f'now undefined.')
+        self.headings = None
+        self.corners = None
+        self.clear_caches('all')
+        _logger.info('Saving pentagons and hexagons.')
+        self.pentagons = set()
+        self.hexagons = set(range(len(self.lases)))
 
     # --- Plotting ------------------------------------------------------------
     def plot(
@@ -508,7 +530,6 @@ class LaseGeometry(Sequence):
 
 # --- Functions ----------------------------------------------------------------
 
-import pyvista as pv
 
 def _pad_faces_for_pyvista(faces):
     padded_faces = []
