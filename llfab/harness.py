@@ -20,7 +20,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from llfab import sal
-from llfab.sal import Inst, Motors, SALC
+from llfab.sal import Inst, Motors
 
 
 Instruction: TypeAlias = tuple[Inst, ...]
