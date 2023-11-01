@@ -345,7 +345,12 @@ class LaseGeometry(Sequence):
         if self.headings is None: raise ValueError('Headings undefined!')
 
         arc_radius = np.arcsin(hex_diameter_long / self.lens_diameter)
-        self.corners = _make_corners_hexagonal(self.lases, self.headings, arc_radius)
+        self.corners = _make_corners_polygonal(
+            num_sides=6,
+            lases=self.lases,
+            headings=self.headings,
+            arc_radius=arc_radius
+        )
 
         _logger.debug(f'Done! Time elapsed: '
                       f'{(time.time() - time_start) * 1e3:.2f} ms')
@@ -752,28 +757,27 @@ def _make_geodesic_sphere(a_val, b_val, repeat=1, hemisphere=False):
     return verts, np.asarray(list(edges)), np.asarray(chull.simplices)
 
 
-def _make_corners_hexagonal(lases, headings, arc_radius):
-    """Incribes a hexagon of long radius arc_radius at each lase, where
-    headings points towards one of the sides of each hexagon."""
+def _make_corners_polygonal(num_sides, lases, headings, arc_radius):
+    """Inscribes a n-gon of long radius arc_radius at each lase, where
+    headings points towards one of the sides of each n-gon."""
 
-    # --- Hexagonal Geometry ---
-    POLY_ANGLE = 2 * np.pi / 6
-    NUM_SIDES = 6
+    # --- N-gonal Geometry ---
+    poly_angle = 2 * np.pi / num_sides
 
-    # We are going to be finding the 6 corners of each of the N lases.
+    # We are going to be finding the S corners of each of the N lases.
     # We're going to do this by drawing a circle around each lase,
-    #  where the vertices of each hexagon is in that circle.
-    # We then take the top of that circle, called the "hexagon top"
+    #  where the vertices of each polygon is in that circle.
+    # We then take the top of that circle, called the "polygon top"
     #  and we rotate that around the lase by each azimuth that we want.
     nlases = len(lases)
 
-    # --- Finding the azimuths; Shape (6, N) ---
-    azimuths = np.vstack([headings] * 6)
-    corner_angles = np.arange(0, NUM_SIDES) * POLY_ANGLE + POLY_ANGLE / 2
+    # --- Finding the azimuths; Shape (S, N) ---
+    azimuths = np.vstack([headings] * num_sides)
+    corner_angles = np.arange(0, num_sides) * poly_angle + poly_angle / 2
     for col, angle in enumerate(corner_angles):
         azimuths[col] += angle
 
-    # --- Finding the hexagon tops; Shape (N, 3) broadcast to (N, 6, 3, 1) ---
+    # --- Finding the polygon tops; Shape (N, 3) broadcast to (N, S, 3, 1) ---
     lase_x, lase_y, lase_z = lases[:,0], lases[:,1], lases[:,2]
 
     lase_inclines = np.arccos(lase_z)
@@ -783,17 +787,17 @@ def _make_corners_hexagonal(lases, headings, arc_radius):
     top_y = lase_y * np.sin(top_inclines) / np.sin(lase_inclines)
     top_z = np.cos(top_inclines)
 
-    hexagon_tops = np.vstack([top_x, top_y, top_z]).T
+    polygon_tops = np.vstack([top_x, top_y, top_z]).T
 
-    hexagon_tops = np.broadcast_to(hexagon_tops, (6, nlases, 3))
-    hexagon_tops = np.swapaxes(hexagon_tops, 0, 1)
-    hexagon_tops = np.reshape(hexagon_tops, (nlases, 6, 3, 1))
+    polygon_tops = np.broadcast_to(polygon_tops, (num_sides, nlases, 3))
+    polygon_tops = np.swapaxes(polygon_tops, 0, 1)
+    polygon_tops = np.reshape(polygon_tops, (nlases, num_sides, 3, 1))
 
-    # --- Making 3x3 Identity matrices into Shape (N, 6, 3, 3) ---
+    # --- Making 3x3 Identity matrices into Shape (N, num_sides, 3, 3) ---
     identity = np.eye(3)
-    identity = np.broadcast_to(identity, (nlases, 6, 3, 3))
+    identity = np.broadcast_to(identity, (nlases, num_sides, 3, 3))
 
-    # --- Make the cross matrices; Shape (N, 3, 3) broadcast to (N, 6, 3, 3) ---
+    # --- Make the cross matrices; Shape (N, 3, 3) broadcast to (N, S, 3, 3) ---
     cross_matrices = np.zeros(lases.shape + (3,))
     cross_matrices[:,0,1] = -lase_z
     cross_matrices[:,1,0] = lase_z
@@ -802,31 +806,34 @@ def _make_corners_hexagonal(lases, headings, arc_radius):
     cross_matrices[:,1,2] = -lase_x
     cross_matrices[:,2,1] = lase_x
 
-    cross_matrices = np.broadcast_to(cross_matrices, (6, nlases, 3, 3))
+    cross_matrices = np.broadcast_to(cross_matrices, (num_sides, nlases, 3, 3))
     cross_matrices = np.swapaxes(cross_matrices, 0, 1)
 
-    # --- Make the outer products; Shape (N, 3, 3) broadcast to (N, 6, 3, 3) ---
+    # --- Make the outer products; Shape (N, 3, 3) broadcast to (N, S, 3, 3) ---
     lases_cols = np.reshape(lases, (nlases, 3, 1))
     lases_rows = np.reshape(lases, (nlases, 1, 3))
 
     outer_products = lases_cols @ lases_rows
 
-    outer_products = np.broadcast_to(outer_products, (6, nlases, 3, 3))
+    outer_products = np.broadcast_to(outer_products, (num_sides, nlases, 3, 3))
     outer_products = np.swapaxes(outer_products, 0, 1)
 
-    # --- Making cos & sin arrays; Shape (N) boradcast to (N, 6, 3, 3) ---
+    # --- Making cos & sin arrays; Shape (N) boradcast to (N, S, 3, 3) ---
     cosine = np.cos(azimuths)
     sine = np.sin(azimuths)
 
-    cosine = np.broadcast_to(cosine, ((3, 3, 6, nlases)))
+    cosine = np.broadcast_to(cosine, ((3, 3, num_sides, nlases)))
     cosine = np.moveaxis(cosine, [0, 1, 2, 3], [2, 3, 1, 0])
-    sine = np.broadcast_to(sine, ((3, 3, 6, nlases)))
+    sine = np.broadcast_to(sine, ((3, 3, num_sides, nlases)))
     sine = np.moveaxis(sine, [0, 1, 2, 3], [2, 3, 1, 0])
 
-    # --- Finally making the rotation matrices; Shape (N, 6, 3, 3) ---
-    rotation_matrices = (cosine * identity) + (sine * cross_matrices) + ((1 - cosine) * outer_products)
+    # --- Finally making the rotation matrices; Shape (N, S, 3, 3) ---
+    rotation_matrices = (cosine * identity) \
+                        + (sine * cross_matrices) \
+                        + ((1 - cosine) * outer_products)
 
-    # --- Make the corners; Shape (N, 6, 3) ---
-    corners = np.reshape((rotation_matrices @ hexagon_tops), (nlases, 6, 3))
+    # --- Make the corners; Shape (N, S, 3) ---
+    corners = np.reshape((rotation_matrices @ polygon_tops),
+                         (nlases, num_sides, 3))
 
     return corners
