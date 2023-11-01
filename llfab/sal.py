@@ -515,6 +515,16 @@ class SixAxisLaserController:
             v_deg=0,
         )
 
+    async def to_zero_safe(self):
+        """A temporary function to go to zero safely and reset V.
+        TODO: In the future, the SALC should make all moves safely."""
+        await self.n.move_to_async(step=(0, 0))
+        await self.z.move_to_async(step=(0, 0))
+        await self.y.move_to_async(step=(0, 0))
+        await self.p.move_to_async(step=(0, 0))
+        await self.x.move_to_async(step=(0, 0))
+        self.v.set_zero()
+
     # --- Toolpath Runner -----------------------------------------------------
     async def run_toolpath(
             self,
