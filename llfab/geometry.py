@@ -338,7 +338,7 @@ class LaseGeometry(Sequence):
         return self.headings
 
     def make_corners_hexagonal(self, hex_diameter_long: float):
-        """Make the corners, assuming regular polygonal lases."""
+        """Make the corners, assuming regular hexagonal lases."""
         time_start = time.time()
         _logger.debug(f'Making hexagonal corners...')
         if self.lases is None: raise ValueError('Lases undefined!')
@@ -347,6 +347,25 @@ class LaseGeometry(Sequence):
         arc_radius = np.arcsin(hex_diameter_long / self.lens_diameter)
         self.corners = _make_corners_polygonal(
             num_sides=6,
+            lases=self.lases,
+            headings=self.headings,
+            arc_radius=arc_radius
+        )
+
+        _logger.debug(f'Done! Time elapsed: '
+                      f'{(time.time() - time_start) * 1e3:.2f} ms')
+        return self.corners
+
+    def make_corners_pentagonal(self, penta_diameter_long: float):
+        """Make the corners, assuming regular pentagonal lases."""
+        time_start = time.time()
+        _logger.debug(f'Making pentagon corners...')
+        if self.lases is None: raise ValueError('Lases undefined!')
+        if self.headings is None: raise ValueError('Headings undefined!')
+
+        arc_radius = np.arcsin(penta_diameter_long / self.lens_diameter)
+        self.corners = _make_corners_polygonal(
+            num_sides=5,
             lases=self.lases,
             headings=self.headings,
             arc_radius=arc_radius
