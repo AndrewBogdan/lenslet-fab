@@ -316,6 +316,15 @@ class LaseGeometry(Sequence):
         return SphPoint.from_xyz(*self.lases[index])
 
     # --- Stateless Geometric Calculations / Optimization Routines ------------
+    def project_sph_to_xy(self) -> np.ndarray:
+        """Performs a azithumal equidistant projection from the zenith, turning
+        a spherical geometry into a planar one. Returns a list of XY
+        coordinates to lase at, of shape (N, 2)."""
+        complex_points = self.arc_to_geodesic(self.inclines) \
+                         * np.exp(1j * self.azimuths)
+        return np.asarray(list(
+            zip(np.real(complex_points), np.imag(complex_points))
+        ))
 
     # --- Stateful Geometric Calculations -------------------------------------
     def bound_headings(self, bounds):

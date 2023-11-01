@@ -29,6 +29,20 @@ def _lase_z_steps(z_steps: tuple):
 
 
 @harness.toolpath
+def path_xy_points(points: np.ndarray):
+    """Make a toolpath out of an array of points.
+
+    Args:
+        points: np.ndarray of shape (N, 2), such that points[:, 0] are the
+    X-coordinates and points[:, 1] are the Y-coordinates.
+    """
+    for x, y in points:
+        yield In.GO, x, y
+        yield In.LASE
+    yield In.RETURN
+
+
+@harness.toolpath
 def path_xy_grid(
     shape: tuple[int, int] = (10, 10),
     stride: tuple[float, float] = (1000.0, 1000.0),
