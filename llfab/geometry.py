@@ -184,6 +184,7 @@ class LaseGeometry(Sequence):
             self.get_edge_distances.cache_clear()
             self.get_lase_distances.cache_clear()
             self.get_min_lase_distances.cache_clear()
+            self.get_mean_lase_distances.cache_clear()
         if 'all' in kind or 'graph' in kind:
             self.edges_of.cache_clear()
             self.neighborhood_of.cache_clear()
@@ -212,7 +213,7 @@ class LaseGeometry(Sequence):
 
         if mask is not None:
             indices = np.asarray(range(len(self)))[mask]
-        self.flags[flag] = np.array(sorted(indices))
+        self.flags[flag] = np.array(sorted(indices), dtype=int)
 
     def mask(self, selection: Selection = None) -> np.ndarray[bool]:
         """Returns a mask corresponding to the selection.
@@ -420,6 +421,15 @@ class LaseGeometry(Sequence):
         measured geodesically, center to center."""
         dists_of_lase = self.get_lase_distances()
         return np.asarray([min(dists) for dists in dists_of_lase])
+
+    @functools.lru_cache(maxsize=1)
+    def get_mean_lase_distances(self):
+        """Get the average center-to-center distance of each lase to its
+        neighbors. Returns an array such that self.lases[idx] will, on average,
+        be distance self.get_mean_lase_distances()[idx] from its neighbors,
+        measured geodesically, center to center."""
+        dists_of_lase = self.get_lase_distances()
+        return np.asarray([float(np.mean(dists)) for dists in dists_of_lase])
 
     @functools.lru_cache(maxsize=None)
     def sph(self, index):
