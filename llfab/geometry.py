@@ -1,7 +1,7 @@
 """Tools for geometric manipulation and creation of the lenslet geometry."""
 
 # --- Libraries ---
-from typing import List, Tuple, TypeAlias, Union
+from typing import List, Optional, Tuple, TypeAlias, Union
 import collections
 import copy
 import functools
@@ -15,11 +15,12 @@ from typing import TypeVar
 from collections.abc import Collection, Sequence
 from numbers import Real
 
+from matplotlib import pyplot as plt
 import numpy as np
 import pyvista as pv
 import scipy
 
-from llfab import geodesic, harness, toolpaths
+from llfab import geodesic, harness, toolpaths, util
 from llfab.harness import Inst as In
 
 
@@ -27,6 +28,7 @@ from llfab.harness import Inst as In
 SphPoint = TypeVar('SphPoint')
 XYZPoint = Tuple[float, float, float]
 PlotArgs: TypeAlias = Union[bool, dict]
+Selection: TypeAlias = Union[None, Sequence[int], Sequence[bool], str]
 
 # Logger
 _logger = logging.getLogger(__name__)
@@ -162,6 +164,7 @@ class LaseGeometry(Sequence):
         self.edges = None
         self.headings = None
         self.corners = None
+        self.flags = {}
 
         self._n_gons = {}
 
@@ -178,6 +181,9 @@ class LaseGeometry(Sequence):
         _logger.debug(f'Clearing {kind} caches...')
         if 'all' in kind or 'vector' in kind or 'graph' in kind:
             self.sph.cache_clear()
+            self.get_edge_distances.cache_clear()
+            self.get_lase_distances.cache_clear()
+            self.get_min_lase_distances.cache_clear()
         if 'all' in kind or 'graph' in kind:
             self.edges_of.cache_clear()
             self.neighborhood_of.cache_clear()
@@ -187,7 +193,72 @@ class LaseGeometry(Sequence):
             self.get_edge_indices_map.cache_clear()
 
     # --- Utility -------------------------------------------------------------
-    #  Graph theoretic tools
+    # ------ Marking & Masking ------------------------------------------------
+    def add_flag(self,
+                 flag: str,
+                 mask: Optional[Sequence[bool]] = None,
+                 indices: Optional[Sequence[int]] = None):
+        """Marks the given lases with the given flag. Supply exactly one of
+        mask or indices.
+
+        Args:
+            flag: The name of the flag. This can be used like lg['flag'].
+            mask: A list of booleans of the same length as the geometry. This
+                will add just the True lases to the flag.
+            indices: The indices of lases to flag.
+        """
+        if mask is not None == indices is not None:
+            raise TypeError('Supply exactly one of mask or indices.')
+
+        if mask is not None:
+            indices = np.asarray(range(len(self)))[mask]
+        self.flags[flag] = np.array(sorted(indices))
+
+    def mask(self, selection: Selection = None) -> np.ndarray[bool]:
+        """Returns a mask corresponding to the selection.
+        If you supply:
+        - None: you get all indices.
+        - A list of booleans (a mask): you get your input, fed back to you.
+        - A list of ints: you get the mask corresponding to those indices.
+        - A string: you get the mask corresponding to that flag."""
+        mask = np.zeros(len(self), dtype=bool)
+        if selection is None:
+            return np.ones(len(self), dtype=bool)
+        elif isinstance(selection, str):
+            mask[self.flags[selection]] = True
+        elif isinstance(selection, Collection):
+            selection = np.asarray(list(selection))
+            if selection.dtype == np.dtype('bool'):
+                return selection
+            else:
+                mask[selection] = True
+        else:
+            raise TypeError(f'Invalid type {type(selection)}')
+
+        return mask
+
+    def select(self, selection: Selection = None) -> np.ndarray[int]:
+        """Returns the indices of the lases corresponding to the selection.
+        If you supply:
+        - None: you get all indices.
+        - A list of booleans (a mask): you get the indices corresponding to
+            that mask.
+        - A list of ints: you get your input, fed back to you, sorted.
+        - A string: you get the value of that flag."""
+        if selection is None:
+            return np.array(range(len(self)))
+        elif isinstance(selection, str):
+            return self.flags[selection]
+        elif isinstance(selection, Collection):
+            selection = np.asarray(list(selection))
+            if selection.dtype == np.dtype('bool'):
+                return np.array(range(len(self)))[selection]
+            else:
+                return selection
+        else:
+            raise TypeError(f'Invalid type {type(selection)}')
+
+    # ------ Graph theoretic tools --------------------------------------------
     @functools.lru_cache(maxsize=None)
     def edges_of(self, lase_index: int):
         """Get all the edges_of associated with a lase."""
@@ -314,66 +385,47 @@ class LaseGeometry(Sequence):
 
         return dict(edge_lookup)
 
+    @functools.lru_cache(maxsize=1)
+    def get_edge_distances(self):
+        """For each edge between lases, get the center-to-center geodesic
+        distance between the two lases. Returns an array such that the edge
+        self.edges[idx] will correspond to self.get_edge_distances()[idx]."""
+        edge_arcs = np.asarray(
+            [self.sph(start).arc_to(self.sph(end)) for start, end in
+             self.edges])
+        edge_dists = self.arc_to_geodesic(edge_arcs)
+        return edge_dists
+
+    @functools.lru_cache(maxsize=1)
+    def get_lase_distances(self):
+        """For each lase, get the distances between it and all its neighbors.
+        This will be a ragged list, so don't try to put it into numpy. Returns
+        a list such that self.lases[idx] will correspond to
+        self.get_lase_distances()[idx], which is itself an array."""
+        edge_dists = self.get_edge_distances()
+        ei_map = self.get_edge_indices_map()
+
+        dists_of_lase = []
+        for index in range(len(self)):
+            neighbors = self.neighbors_of(index)
+            edges = [ei_map[index][neigh] for neigh in neighbors]
+            dists_of_lase.append(edge_dists[edges])
+        return dists_of_lase
+
+    @functools.lru_cache(maxsize=1)
+    def get_min_lase_distances(self):
+        """Get the center-to-center distance of each lase to its nearest
+        neighbor. Returns an array such that self.lases[idx] will be distance
+        self.get_min_lase_distances()[idx] from its nearest neighbor,
+        measured geodesically, center to center."""
+        dists_of_lase = self.get_lase_distances()
+        return np.asarray([min(dists) for dists in dists_of_lase])
+
     @functools.lru_cache(maxsize=None)
     def sph(self, index):
         return SphPoint.from_xyz(*self.lases[index])
 
-    # --- Stateless Geometric Calculations / Optimization Routines ------------
-    def project_sph_to_xy(self) -> np.ndarray:
-        """Performs a azithumal equidistant projection from the zenith, turning
-        a spherical geometry into a planar one. Returns a list of XY
-        coordinates to lase at, of shape (N, 2)."""
-        complex_points = self.arc_to_geodesic(self.inclines) \
-                         * np.exp(1j * self.azimuths)
-        return np.asarray(list(
-            zip(np.real(complex_points), np.imag(complex_points))
-        ))
-
-    # --- Stateful Geometric Calculations -------------------------------------
-    def bound_headings(self, bounds):
-        """Makes sure that abs(headings) is within bounds, and changes it
-        if necessary."""
-        mask = abs(self.headings) > bounds
-        self.headings[mask] = bounds[mask] * np.sign(self.headings[mask])
-        return self.headings
-
-    def make_corners_hexagonal(self, hex_diameter_long: float):
-        """Make the corners, assuming regular hexagonal lases."""
-        time_start = time.time()
-        _logger.debug(f'Making hexagonal corners...')
-        if self.lases is None: raise ValueError('Lases undefined!')
-        if self.headings is None: raise ValueError('Headings undefined!')
-
-        arc_radius = np.arcsin(hex_diameter_long / self.lens_diameter)
-        self.corners = _make_corners_polygonal(
-            num_sides=6,
-            lases=self.lases,
-            headings=self.headings,
-            arc_radius=arc_radius
-        )
-
-        _logger.debug(f'Done! Time elapsed: '
-                      f'{(time.time() - time_start) * 1e3:.2f} ms')
-        return self.corners
-
-    def make_corners_pentagonal(self, penta_diameter_long: float):
-        """Make the corners, assuming regular pentagonal lases."""
-        time_start = time.time()
-        _logger.debug(f'Making pentagon corners...')
-        if self.lases is None: raise ValueError('Lases undefined!')
-        if self.headings is None: raise ValueError('Headings undefined!')
-
-        arc_radius = np.arcsin(penta_diameter_long / self.lens_diameter)
-        self.corners = _make_corners_polygonal(
-            num_sides=5,
-            lases=self.lases,
-            headings=self.headings,
-            arc_radius=arc_radius
-        )
-
-        _logger.debug(f'Done! Time elapsed: '
-                      f'{(time.time() - time_start) * 1e3:.2f} ms')
-        return self.corners
+    # --- Volatile Geometric Calculations -------------------------------------
 
     def make_lases_geodesic(self, a_val, b_val):
         """Make a LaseGeomtry where the lases are at the vertices of a geodesic sphere."""
@@ -381,49 +433,6 @@ class LaseGeometry(Sequence):
         lases, edges, _ = _make_geodesic_sphere(a_val, b_val, repeat=1)
         self.lases = lases
         self.edges = edges
-        return self.lases
-
-    def make_headings_from_edges(self):
-        """Picks headings so that they point towards an edge."""
-        _logger.warning(f'Using inefficient method '
-                        f'{self.__class__.__name__}.make_headings_from_edges:')
-        if self.lases is None: raise ValueError('Lases undefined!')
-
-        headings = []
-        for lase_index, lase_xyz in enumerate(self.lases):
-            if lase_index % min(1000, len(self.lases) // 5 + 1) == 0:
-                _logger.info(f'\t{100 * lase_index / len(self.lases):.2f}% complete...')
-
-            lase = self.sph(lase_index)
-            lase_headings = []
-
-            # Get the headings from each neighbor
-            for neighbor_index in self.neighbors_of(lase_index):
-                neighbor = self.sph(neighbor_index)
-                lase_headings.append(lase.heading_to(neighbor))
-
-            # Pick the one that's closest to North
-            min_heading = min(lase_headings, key=abs)
-            # if abs(min_heading) > 2 * np.pi / 12:
-            #     _logger.warning(f'Lase #{lase_index} with min '
-            #                     f'{np.degrees(min_heading):.2f} '
-            #                     f'has possible headings '
-            #                     f'{np.degrees(lase_headings)}, none are within range.')
-            headings.append(min_heading)
-        self.headings = np.array(headings)
-        return self.headings
-
-    def minimize_headings(self):
-        """Minimize the headings for the N axis to reach them, relies on
-        self.n_gons correctly knowing which lases are what."""
-        _logger.info('Minimizing headings...')
-        minimized_headings = []
-        for lase_idx, heading in enumerate(self.headings):
-            poly_angle = 2 * np.pi / self.degree_of(lase_idx)
-            min_heading = min((heading % poly_angle, heading % -poly_angle), key=abs)
-            minimized_headings.append(min_heading)
-        self.headings = np.array(minimized_headings)
-        return self.headings
 
     def set_zenith(self, coords):
         """Rotate the geometry so the zenith is at a specific location."""
@@ -439,6 +448,7 @@ class LaseGeometry(Sequence):
         self.corners = None
         self.clear_caches('vector')
 
+    @util.depreciate
     def slice_in_half(self, cutoff=np.radians(85), drop_pentagons=True):
         """Slice the geometry in half, keeping the top half."""
         _logger.warning(f'Using inefficient method '
@@ -469,19 +479,134 @@ class LaseGeometry(Sequence):
         self.clear_caches('all')
         _logger.info('Saving pentagons and hexagons.')
 
+    # --- Stateful Geometric Calculations -------------------------------------
+    # ------ Headings ---------------------------------------------------------
+    def make_headings_from_edges(self):
+        """Picks headings so that they point towards an edge."""
+        _logger.warning(f'Using inefficient method '
+                        f'{self.__class__.__name__}.make_headings_from_edges:')
+        if self.lases is None: raise ValueError('Lases undefined!')
+
+        headings = []
+        for lase_index, lase_xyz in enumerate(self.lases):
+            if lase_index % min(1000, len(self.lases) // 5 + 1) == 0:
+                _logger.info(f'\t{100 * lase_index / len(self.lases):.2f}% complete...')
+
+            lase = self.sph(lase_index)
+            lase_headings = []
+
+            # Get the headings from each neighbor
+            for neighbor_index in self.neighbors_of(lase_index):
+                neighbor = self.sph(neighbor_index)
+                lase_headings.append(lase.heading_to(neighbor))
+
+            # Pick the one that's closest to North
+            min_heading = min(lase_headings, key=abs)
+            headings.append(min_heading)
+        self.headings = np.array(headings)
+
+    def minimize_headings(self):
+        """Minimize the headings for the N axis to reach them, relies on
+        self.n_gons correctly knowing which lases are what."""
+        _logger.info('Minimizing headings...')
+        minimized_headings = []
+        for lase_idx, heading in enumerate(self.headings):
+            poly_angle = 2 * np.pi / self.degree_of(lase_idx)
+            min_heading = min((heading % poly_angle, heading % -poly_angle), key=abs)
+            minimized_headings.append(min_heading)
+        self.headings = np.array(minimized_headings)
+
+    def bound_headings(self, bounds) -> np.ndarray[bool]:
+        """Makes sure that abs(headings) is within bounds, and changes it
+        if necessary. Returns a mask of the lases which were bounded."""
+        mask = abs(self.headings) > bounds
+        self.headings[mask] = bounds[mask] * np.sign(self.headings[mask])
+        return mask
+
+    # ------ Corners ----------------------------------------------------------
+    def make_corners_hexagonal(self, hex_diameter_long: float):
+        """Make the corners, assuming regular hexagonal lases."""
+        time_start = time.time()
+        _logger.debug(f'Making hexagonal corners...')
+        if self.lases is None: raise ValueError('Lases undefined!')
+        if self.headings is None: raise ValueError('Headings undefined!')
+
+        arc_radius = np.arcsin(hex_diameter_long / self.lens_diameter)
+        self.corners = _make_corners_polygonal(
+            num_sides=6,
+            lases=self.lases,
+            headings=self.headings,
+            arc_radius=arc_radius
+        )
+
+        _logger.debug(f'Done! Time elapsed: '
+                      f'{(time.time() - time_start) * 1e3:.2f} ms')
+
+    def make_corners_pentagonal(self, penta_diameter_long: float):
+        """Make the corners, assuming regular pentagonal lases."""
+        time_start = time.time()
+        _logger.debug(f'Making pentagon corners...')
+        if self.lases is None: raise ValueError('Lases undefined!')
+        if self.headings is None: raise ValueError('Headings undefined!')
+
+        arc_radius = np.arcsin(penta_diameter_long / self.lens_diameter)
+        self.corners = _make_corners_polygonal(
+            num_sides=5,
+            lases=self.lases,
+            headings=self.headings,
+            arc_radius=arc_radius
+        )
+
+        _logger.debug(f'Done! Time elapsed: '
+                      f'{(time.time() - time_start) * 1e3:.2f} ms')
+
+    # ------ Other ------------------------------------------------------------
+    def flag_in_half(self, cutoff=np.radians(80)):
+        """Slice the geometry in half, keeping the top half. More specifically,
+        this marks everything above the cutoff as with the flag 'upper', and
+        everything below it with the flag 'lower'."""
+        mask = self.inclines < cutoff
+        self.add_flag('upper', mask)
+        self.add_flag('lower', ~mask)
+
+    # --- Stateless Geometric Calculations / Optimization Routines ------------
+    def project_sph_to_xyv(self) -> np.ndarray:
+        """Performs a azithumal equidistant projection from the zenith, turning
+        a spherical geometry into a planar one. Returns a list of XY
+        coordinates to lase at, of shape (N, 2)."""
+        complex_points = self.arc_to_geodesic(self.inclines) \
+                         * np.exp(1j * self.azimuths)
+        return np.asarray(list(zip(
+            np.real(complex_points),
+            np.imag(complex_points),
+            np.degrees(self.headings),
+        )))
+
     # --- Lase Orderings ------------------------------------------------------
-    def order_random_walk(self, start_idx: int) -> List[int]:
+    def order_random_walk(self,
+                          start_idx: int,
+                          selection: Selection = None) -> List[int]:
         """An ordering of the geometry that starts at lase start_idx, and picks
         random neighbors to lase next until it runs out of neighbors, at which
         point is picks a random location to go to next. It does this until
-        it has lased everything."""
+        it has lased everything.
+
+        Args:
+            start_idx: The lase to start at.
+            selection: A Selection to pick what you want to lase.
+        """
+        # Here's what we will lase
+        lases = set(self.select(selection))
+        if not lases:
+            raise ValueError('Selecting an empty collection (nothing to lase).')
+
         # Logging information, in the l_ namespace
-        l_log_every = min(1000, len(self.lases) // 5 + 1)  # Log every N steps
+        l_log_every = min(1000, len(lases) // 5 + 1)  # Log every N steps
         l_num_complete = -1
 
         # Set up two lists which will always sum to everything we lase.
         ordering = []
-        remaining = list(range(len(self)))
+        remaining = list(lases)
 
         # We shuffle the remaining so that when we run out of neighbors, we
         #  pick a random one.
@@ -496,14 +621,14 @@ class LaseGeometry(Sequence):
             # We check if len(ordering) has decreased mod l_log_every. If so,
             #  that means over the last iteration, we passed a threshold.
             if len(ordering) % l_log_every < l_num_complete % l_log_every:
-                l_percent_complete = 100 * len(ordering) / len(self.lases)
+                l_percent_complete = 100 * len(ordering) / len(lases)
                 _logger.info(f'{l_percent_complete:.2f}% complete...')
             l_num_complete = len(ordering)
 
             # Find neighbors that we haven't visited yet
             # It's cached, so we're not wasting time
-            neighbors = list(self.neighbors_of(current_idx))
-            neighbors = list(set(neighbors) - set(ordering))
+            neighbors = set(self.neighbors_of(current_idx)) & lases
+            neighbors = list(neighbors - set(ordering))
 
             if neighbors:
                 # Pick a random remaining neighbor
@@ -518,28 +643,51 @@ class LaseGeometry(Sequence):
             current_idx = next_idx
         return ordering
 
-    def order_spiral(self, start_coords: XYZPoint = (0, 0, 1)) -> List[int]:
+    def order_spiral(self,
+                     start_coords: XYZPoint = (0, 0, 1),
+                     selection: Selection = None) -> List[int]:
         """An ordering of the geometry that starts at the lase closest to
-        start_coords and spirals outwards. start_coords defaults to north."""
+        start_coords and spirals outwards. start_coords defaults to north.
+
+        Args:
+            start_coords: The coordinates to spiral from.
+            selection: A Selection to pick what you want to lase.
+        """
+        lases = self.select(selection)
+        lases_set = set(lases)
+        if len(lases) == 0:
+            raise ValueError('Selecting an empty collection (nothing to lase).')
+
         # Logging information, in the l_ namespace
-        l_log_every = min(1000, len(self.lases) // 5 + 1)  # Log every N steps
+        l_log_every = min(1000, len(lases) // 5 + 1)  # Log every N steps
         l_num_complete = -1
 
+        # Find our start index
+        dist_from_start = np.sum((self.lases - start_coords) ** 2, axis=1)
+        dist_from_start[~self.mask(lases)] = float('inf')
+        start_idx = np.argmin(dist_from_start)
+        assert start_idx in lases, 'Start index not in selection.'
+
+        # A function to find neighbors that are in the selection
+        def neighbors_todo(lase_idx, distance):
+            neighs = set(self.neighbors_of(lase_idx, distance=distance))
+            neighs = list(neighs & lases_set)
+            return neighs
+
         ordering = []
-        start_idx = np.argmin(np.sum((self.lases - start_coords) ** 2, axis=1))
         level = 0
-        # Check if we're finished by seeing if there are any more neighbors
-        while self.neighbors_of(start_idx, distance=level):
+        # Run until we've ordered all the lases we want to.
+        while lases_set - set(ordering):
             # Logging information
             # We check if len(ordering) has decreased mod l_log_every. If so,
             #  that means over the last iteration, we passed a threshold.
             if len(ordering) % l_log_every < l_num_complete % l_log_every:
-                l_percent_complete = 100 * len(ordering) / len(self.lases)
+                l_percent_complete = 100 * len(ordering) / len(lases)
                 _logger.info(f'{l_percent_complete:.2f}% complete...')
             l_num_complete = len(ordering)
 
             # It's cached, so we're not wasting time
-            neighbors = list(self.neighbors_of(start_idx, distance=level))
+            neighbors = neighbors_todo(start_idx, distance=level)
 
             # Sort the neighbors by azimuth
             ordering.extend(
@@ -550,7 +698,12 @@ class LaseGeometry(Sequence):
 
     # --- Toolpaths -----------------------------------------------------------
     @harness.toolpath
-    def toolpath(self, order='spiral', fence_at=360):
+    def toolpath(
+        self,
+        order='spiral',
+        fence_at=360,
+        selection: Selection = None,
+    ):
         """A toolpath for the LensGeometry.
 
         Args:
@@ -559,14 +712,15 @@ class LaseGeometry(Sequence):
             fence_at: The degrees at which, if N is moving more than it, it
                 should insert fence instructions to break up the movement,
                 hopefully keeping from bumping anything.
+            selection: A Selection to pick what you want to lase.
         """
         # --- Digest/calculate the ordering -----------------------------------
         if isinstance(order, str):
             match order:
                 case 'spiral':
-                    ordering = self.order_spiral()
+                    ordering = self.order_spiral(selection=selection)
                 case 'random':
-                    ordering = self.order_random_walk()
+                    ordering = self.order_random_walk(selection=selection)
                 case _:
                     raise ValueError(f'Invalid ordering {order} supplied!')
         else:
@@ -612,11 +766,12 @@ class LaseGeometry(Sequence):
             incline_prev, azimuth_prev, heading_prev = (
             incline, azimuth, heading)
 
-    def toolpath_project_to_xy(self):
+    def toolpath_project_to_xyv(self, selection: Selection = None):
         """A toolpath which lases in XY the projection given by
-        project_sph_to_xy. This function is not meant for big lases, and
+        project_sph_to_xyv. This function is not meant for big lases, and
         doesn't allow you to pick the order you lase in."""
-        return toolpaths.path_xy_points(self.project_sph_to_xy())
+        ordering = self.order_spiral(selection=selection)
+        return toolpaths.path_xyv_points(self.project_sph_to_xyv()[ordering])
 
     # --- Plotting ------------------------------------------------------------
     def plot(
@@ -627,7 +782,7 @@ class LaseGeometry(Sequence):
             plot_zenith: PlotArgs = True,
 
             lase_labels=None,
-            mark_mask=None,
+            mark: Selection = None,
 
             jupyter_backend: str = 'panel'
     ):
@@ -642,7 +797,7 @@ class LaseGeometry(Sequence):
         kwargs_lenslet = dict(style='surface', color='CFAF8F')
         kwargs_hexes = dict(style='surface', show_edges=True, color='444444')
         kwargs_lases = dict(style='points', color='black')
-        kwargs_zenith = dict(style='points', color='red')
+        kwargs_zenith = dict(style='points', color='green')
 
         if isinstance(plot_lenslet, dict): kwargs_hexes.update(kwargs_lenslet)
         if isinstance(plot_hexes, dict): kwargs_hexes.update(kwargs_hexes)
@@ -651,13 +806,15 @@ class LaseGeometry(Sequence):
 
         kwargs_mark = copy.deepcopy(kwargs_hexes)
         kwargs_mark.update(dict(color='red'))
-        do_mark = mark_mask is not None and any(mark_mask)
+        do_mark = mark is not None and any(mark)
 
         # --- Create hex_vertices and hex_faces_pv, which plots the hexagons ---
         # Mark according to the mask
         if do_mark:
-            corners_reg = self.corners[~mark_mask]
-            corners_mark = self.corners[mark_mask]
+            mask = self.mask(mark)
+
+            corners_reg = self.corners[~mask]
+            corners_mark = self.corners[mask]
         else:
             corners_reg = self.corners
 
@@ -706,8 +863,54 @@ class LaseGeometry(Sequence):
         plotter.enable_trackball_style()
         plotter.show(jupyter_backend=jupyter_backend)
 
+    def plot_edge_distances(self, goal: Optional[float] = None):
+        """Plots self.get_edge_distances() in a histogram."""
+        edge_dists = self.get_edge_distances()
+
+        mean_dist = np.mean(edge_dists)
+        median_dist = np.median(edge_dists)
+
+        ax = plt.gca()
+        ax.hist(edge_dists, bins=40)
+        ax.set_ylabel('Count')
+        ax.set_xlabel('Center-to-center distance (nm)')
+        ax.axvline(mean_dist, color='black')
+        ax.axvline(median_dist, color='red')
+        ax.text(mean_dist + 0.5, ax.get_ylim()[1] - 100, 'mean', color='black',
+                rotation='vertical')
+        ax.text(median_dist + 0.5, ax.get_ylim()[1] - 100, 'median',
+                color='red', rotation='vertical')
+        if goal is not None:
+            ax.axvline(goal, color='green')
+            ax.text(goal + 0.5, ax.get_ylim()[1] - 100, 'goal', color='green',
+                    rotation='vertical')
+
+    def plot_min_lase_distances(self, goal: Optional[float] = None):
+        """Plots self.get_min_lase_distances() in a histogram."""
+        edge_dists = self.get_min_lase_distances()
+
+        mean_dist = np.mean(edge_dists)
+        median_dist = np.median(edge_dists)
+
+        ax = plt.gca()
+        ax.hist(edge_dists, bins=40)
+        ax.set_ylabel('Count')
+        ax.set_xlabel('Center-to-center distance (nm)')
+        ax.axvline(mean_dist, color='black')
+        ax.axvline(median_dist, color='red')
+        ax.text(mean_dist + 0.5, ax.get_ylim()[1] - 100, 'mean', color='black',
+                 rotation='vertical')
+        ax.text(median_dist + 0.5, ax.get_ylim()[1] - 100, 'median',
+                 color='red', rotation='vertical')
+        if goal is not None:
+            ax.axvline(goal, color='green')
+            ax.text(goal + 0.5, ax.get_ylim()[1] - 100, 'goal', color='green',
+                    rotation='vertical')
+
     # --- Magic Methods -------------------------------------------------------
-    def __getitem__(self, index) -> SphPoint:
+    def __getitem__(self, index: Union[int, str]) -> XYZPoint:
+        if isinstance(index, str):
+            return self.lases[self.flags[index]]
         return self.lases[index]
 
     def __len__(self):

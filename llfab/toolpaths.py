@@ -29,15 +29,17 @@ def _lase_z_steps(z_steps: tuple):
 
 
 @harness.toolpath
-def path_xy_points(points: np.ndarray):
+def path_xyv_points(points: np.ndarray):
     """Make a toolpath out of an array of points.
 
     Args:
-        points: np.ndarray of shape (N, 2), such that points[:, 0] are the
-    X-coordinates and points[:, 1] are the Y-coordinates.
+        points: np.ndarray of shape (N, 3), such that
+        - points[:, 0] are the X-coordinates,
+        - points[:, 1] are the Y-coordinates, and
+        - points[:, 2] are the headings, i.e. V-coordiantes.
     """
-    for x, y in points:
-        yield In.GO, x, y
+    for x, y, v in points:
+        yield In.GO, x, y, None, None, None, v
         yield In.LASE
     yield In.RETURN
 
