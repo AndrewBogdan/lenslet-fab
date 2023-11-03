@@ -873,50 +873,6 @@ class LaseGeometry(Sequence):
         plotter.enable_trackball_style()
         plotter.show(jupyter_backend=jupyter_backend)
 
-    def plot_edge_distances(self, goal: Optional[float] = None):
-        """Plots self.get_edge_distances() in a histogram."""
-        edge_dists = self.get_edge_distances()
-
-        mean_dist = np.mean(edge_dists)
-        median_dist = np.median(edge_dists)
-
-        ax = plt.gca()
-        ax.hist(edge_dists, bins=40)
-        ax.set_ylabel('Count')
-        ax.set_xlabel('Center-to-center distance (nm)')
-        ax.axvline(mean_dist, color='black')
-        ax.axvline(median_dist, color='red')
-        ax.text(mean_dist + 0.5, ax.get_ylim()[1] - 100, 'mean', color='black',
-                rotation='vertical')
-        ax.text(median_dist + 0.5, ax.get_ylim()[1] - 100, 'median',
-                color='red', rotation='vertical')
-        if goal is not None:
-            ax.axvline(goal, color='green')
-            ax.text(goal + 0.5, ax.get_ylim()[1] - 100, 'goal', color='green',
-                    rotation='vertical')
-
-    def plot_min_lase_distances(self, goal: Optional[float] = None):
-        """Plots self.get_min_lase_distances() in a histogram."""
-        edge_dists = self.get_min_lase_distances()
-
-        mean_dist = np.mean(edge_dists)
-        median_dist = np.median(edge_dists)
-
-        ax = plt.gca()
-        ax.hist(edge_dists, bins=40)
-        ax.set_ylabel('Count')
-        ax.set_xlabel('Center-to-center distance (nm)')
-        ax.axvline(mean_dist, color='black')
-        ax.axvline(median_dist, color='red')
-        ax.text(mean_dist + 0.5, ax.get_ylim()[1] - 100, 'mean', color='black',
-                 rotation='vertical')
-        ax.text(median_dist + 0.5, ax.get_ylim()[1] - 100, 'median',
-                 color='red', rotation='vertical')
-        if goal is not None:
-            ax.axvline(goal, color='green')
-            ax.text(goal + 0.5, ax.get_ylim()[1] - 100, 'goal', color='green',
-                    rotation='vertical')
-
     # --- Magic Methods -------------------------------------------------------
     def __getitem__(self, index: Union[int, str]) -> XYZPoint:
         if isinstance(index, str):

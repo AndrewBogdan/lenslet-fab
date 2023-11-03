@@ -3,13 +3,17 @@
 Misc. Utilities
 """
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import logging
 import functools
 import os
 import sys
 import warnings
+
+from matplotlib import pyplot as plt
+import numpy as np
+
 
 # --- String Formatting -------------------------------------------------------
 POSITION_FORMAT_CSV = '{0:>10.3f}, {1:>10.3f}, {2:>10.3f}, ' \
@@ -44,6 +48,30 @@ def get_lase_logger(name: str):
     logger.addHandler(_handler_laselog)
     logger.propagate = False
     return logger
+
+
+# --- Plotting ----------------------------------------------------------------
+def plot_histogram(data, ax=None, goal: Optional[float] = None):
+    """Plots data in a histogram."""
+    edge_dists = data
+
+    mean_dist = np.mean(edge_dists)
+    median_dist = np.median(edge_dists)
+
+    ax = plt.gca() if ax is None else ax
+    ax.hist(edge_dists, bins=40)
+    ax.set_ylabel('Count')
+    ax.set_xlabel('Center-to-center distance (nm)')
+    ax.axvline(mean_dist, color='black')
+    ax.axvline(median_dist, color='red')
+    ax.text(mean_dist + 0.5, ax.get_ylim()[1] - 100, 'mean', color='black',
+            rotation='vertical')
+    ax.text(median_dist + 0.5, ax.get_ylim()[1] - 100, 'median',
+            color='red', rotation='vertical')
+    if goal is not None:
+        ax.axvline(goal, color='green')
+        ax.text(goal + 0.5, ax.get_ylim()[1] - 100, 'goal', color='green',
+                rotation='vertical')
 
 
 # --- Other Utility Functions -------------------------------------------------
