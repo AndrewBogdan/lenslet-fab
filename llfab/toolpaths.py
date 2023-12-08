@@ -8,6 +8,7 @@ import math
 import numpy as np
 
 from llfab import harness
+from llfab import util
 from llfab.harness import Inst as In
 
 
@@ -26,6 +27,69 @@ def _lase_z_steps(z_steps: tuple):
         yield In.MOVE, 0, 0, z_step
         yield In.LASE
     yield In.MOVE, 0, 0, -sum(z_steps)
+
+
+def _get_hex_grid(
+    pitch: float,
+    radius: float,
+    angle: float,
+) -> np.ndarray:
+    """Get a hexagonal grid of the given radius, rotated by the given angle.
+
+    Args:
+        pitch: The distance between two adjacent hexagons.
+        radius: The points will all have magnitude less than this radius, and
+            The area within this radius will be filled with points.
+        angle: An angle of zero will correspond to hexagons oriented like ⬢.
+            That is, along the x-axis (y=0), it will appear as ⬢⬢⬢⬢⬢.
+
+    Returns: A numpy array of points, sorted by x first, and then by y. One of
+        the points will be (0, 0), within 1e-6 error.
+    """
+    if pitch < 0: raise ValueError('Pitch cannot be negative.')
+    if radius < 0: raise ValueError('Radius cannot be negative.')
+
+    pitch_short = pitch * math.sqrt(3) / 2
+    pitch_long = pitch
+    grid_diameter = 2 * radius + 3 * pitch_long
+
+    num_short = math.floor(grid_diameter / pitch_short)
+    num_long = math.floor(grid_diameter / pitch_long)
+
+    # Introduce short and long axes
+    pos_short = -grid_diameter / 2
+    pos_long = -grid_diameter / 2
+
+    # Create a hexagonal grid
+    positions = []
+    direction = 1
+    for _ in range(num_short):
+        for _ in range(num_long):
+            # Record a position
+            positions.append((pos_long, pos_short))
+            pos_long += pitch_long * direction
+        # Move down in Short, back half of Long
+        pos_short += pitch_short
+        pos_long += pitch_long / 2 * direction * -1
+        # Change direction
+        direction *= -1
+    positions = np.array(positions)
+
+    # Align the center of the grid to (0, 0)
+    center_index = np.argmin(np.linalg.norm(positions, axis=1))
+    positions = positions - positions[center_index]
+
+    # Rotate the grid by angle
+    positions_complex = (positions[:, 0] + 1j * positions[:, 1]) * np.exp(1j * np.radians(angle))
+    positions = np.array([np.real(positions_complex), np.imag(positions_complex)]).T
+
+    # Remove everything outside of the radius
+    positions = positions[np.linalg.norm(positions, axis=1) < radius]
+    assert any(np.linalg.norm(positions, axis=1) < 1e-6)
+
+    # Sort
+    positions = np.array(sorted(positions.tolist()))
+    return positions
 
 
 @harness.toolpath
@@ -73,6 +137,7 @@ def path_xy_grid(
 
 
 @harness.toolpath
+@util.depreciate
 def path_xy_hex_grid(
     dimensions: tuple[float, float] = (1000.0, 1000.0),
     pitch: tuple[float, float] = (100.0, 115.47),
@@ -136,7 +201,8 @@ def path_xy_hex_grid(
 @harness.toolpath
 def path_xy_hex_grid_circle(
     radius: float = 500.0,
-    pitch: tuple = (100.0, 115.47),
+    pitch: float = 100.0,
+    angle: float = 0.0,
     z_steps: tuple = (),
 ):
     """Lase a circular region in a hexagonal pattern.
@@ -149,34 +215,14 @@ def path_xy_hex_grid_circle(
             empty (the default), it will lase once without moving.
     """
     radius = float(radius)
-    pitch_x = float(pitch[0])
-    pitch_y = float(pitch[1])
+    pitch = float(pitch)
+    angle = float(angle)
 
-    if radius < 0:
-        raise ValueError('Radius cannot be negative.')
-    if pitch_x < 0 or pitch_y < 0:
-        raise ValueError('Pitches cannot be negative.')
+    lases = _get_hex_grid(pitch=pitch, radius=radius, angle=angle)
 
-    # Move to upper right corner of a square
-    pos = np.array((radius, radius))
-    yield In.MOVE, radius, radius
-
-    direction = -1
-    while pos[0] >= -radius:
-        while pos[1] * direction <= radius:
-            # Lase only if we're inside the circle
-            if math.sqrt(pos[0] ** 2 + pos[1] ** 2) <= radius:
-                yield from _lase_z_steps(z_steps)
-            # Move to the left or right in Y
-            mov = np.array((0, pitch_y * direction))
-            pos += mov
-            yield In.MOVE, *mov
-        # Move down in X, back half of Y
-        mov = np.array((-pitch_x, pitch_y / 2 * direction * -1))
-        pos += mov
-        yield In.MOVE, *mov
-        # Change direction
-        direction *= -1
+    for (lase_x, lase_y) in lases:
+        yield In.GO, lase_x, lase_y
+        yield from _lase_z_steps(z_steps)
     yield In.RETURN
 
 
