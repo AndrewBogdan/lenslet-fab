@@ -16,16 +16,17 @@ unit:
 
 # Note: anything less than 10 ms is going to slow down the controller!
 refresh_interval_ms:
-  x: 30
-  y: 30
-  z: 30
-  n: 30
-  p: 30
-  v: 30
+  x: 15  # These used to be 30
+  y: 15
+  z: 15
+  n: 15
+  p: 15
+  v: 15
 
 geometry:
   # Compare the height of the origin at p=0 and 90 deg.
-  p_radius_um: -12.8e3
+  #p_radius_um: -12.8e3
+  p_radius_um: -13.251e3
 
   # Define z=0 when the v-bed is 105 mm off of the xy bed
   # z_zero_um: 0 # 105e3

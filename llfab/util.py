@@ -72,6 +72,7 @@ def plot_histogram(data, ax=None, goal: Optional[float] = None):
         ax.axvline(goal, color='green')
         ax.text(goal + 0.5, ax.get_ylim()[1] - 100, 'goal', color='green',
                 rotation='vertical')
+    return ax
 
 
 # --- Other Utility Functions -------------------------------------------------

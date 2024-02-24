@@ -10,7 +10,8 @@ if sys.version_info >= (3,0):
     import urllib.parse
 
 # Andrew's Wrapper
-_XIMC_DIR = os.path.join(sys.prefix, "Lib", "ximc")
+_XIMC_DIR = r'C:\Users\LaserLab\Andrew\LensletFab\venv\Lib\ximc'
+# _XIMC_DIR = os.path.join(sys.prefix, "Lib", "ximc")
 
 # Dependences
     

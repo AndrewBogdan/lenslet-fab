@@ -589,7 +589,7 @@ class LaseGeometry(Sequence):
         return np.asarray(list(zip(
             np.real(complex_points),
             np.imag(complex_points),
-            np.degrees(self.headings),
+            np.degrees(self.headings + (np.angle(complex_points) + np.pi/2)),
         )))
 
     # --- Lase Orderings ------------------------------------------------------
